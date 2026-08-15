@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import os
+from pathlib import Path
 import queue
 import shlex
 import subprocess
@@ -28,7 +29,18 @@ class EngineSpec:
     @staticmethod
     def from_command(name: str, command: str | Iterable[str], *, options: dict[str, str | int | bool] | None = None,
                      cwd: str | None = None) -> "EngineSpec":
-        args = tuple(shlex.split(command) if isinstance(command, str) else command)
+        if isinstance(command, str):
+            # GUI/file-picker callers pass a concrete executable path. Treat an
+            # existing path as one argv element before attempting shell-like parsing:
+            # POSIX shlex would otherwise consume Windows backslashes and a path with
+            # spaces would be split into multiple arguments.
+            candidate = Path(command.strip().strip('"'))
+            if candidate.is_file():
+                args = (str(candidate),)
+            else:
+                args = tuple(shlex.split(command, posix=(os.name != "nt")))
+        else:
+            args = tuple(command)
         if not args:
             raise ValueError("Engine command cannot be empty")
         return EngineSpec(name=name, command=args, options=dict(options or {}), cwd=cwd)
@@ -118,84 +130,73 @@ class UciEngine:
         self.send(command)
 
     def bestmove(self, go_command: str, timeout: float) -> tuple[str, list[str], float]:
-        started = time.perf_counter()
         self.send(go_command)
+        started = time.monotonic()
         info: list[str] = []
-        deadline = time.monotonic() + timeout
         while True:
-            remaining = deadline - time.monotonic()
+            remaining = timeout - (time.monotonic() - started)
             if remaining <= 0:
-                self._try_stop()
-                raise UciTimeout(f"{self.spec.name} exceeded move timeout ({timeout:.3f}s)")
-            line = self._next_line(remaining)
+                raise UciTimeout(f"Timed out waiting for bestmove from {self.spec.name}")
+            try:
+                line = self._lines.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise UciTimeout(f"Timed out waiting for bestmove from {self.spec.name}") from exc
+            if line is None:
+                raise UciError(f"Engine {self.spec.name} closed stdout")
             if line.startswith("info "):
                 info.append(line)
             elif line.startswith("bestmove "):
                 parts = line.split()
                 if len(parts) < 2:
-                    raise UciError(f"Malformed bestmove from {self.spec.name}: {line}")
-                return parts[1], info, time.perf_counter() - started
+                    raise UciError(f"Malformed bestmove from {self.spec.name}: {line!r}")
+                return parts[1], info, time.monotonic() - started
 
-    def _try_stop(self) -> None:
-        try:
+    def stop(self) -> None:
+        if self.process is not None and self.process.poll() is None:
             self.send("stop")
-        except UciError:
-            pass
 
-    def _next_line(self, timeout: float) -> str:
+    def quit(self) -> None:
+        process = self.process
+        if process is None:
+            return
         try:
-            line = self._lines.get(timeout=timeout)
-        except queue.Empty as exc:
-            raise UciTimeout(f"Timed out waiting for output from {self.spec.name}") from exc
-        if line is None:
-            code = self.process.poll() if self.process else None
-            stderr = ""
-            if self.process and self.process.stderr:
+            if process.poll() is None:
                 try:
-                    stderr = self.process.stderr.read().strip()
-                except OSError:
+                    self.send("quit")
+                except UciError:
                     pass
-            extra = f": {stderr}" if stderr else ""
-            raise UciError(f"Engine {self.spec.name} terminated (code {code}){extra}")
-        return line
+                try:
+                    process.wait(timeout=2.0)
+                except subprocess.TimeoutExpired:
+                    process.terminate()
+                    try:
+                        process.wait(timeout=1.0)
+                    except subprocess.TimeoutExpired:
+                        process.kill()
+                        process.wait(timeout=1.0)
+        finally:
+            self.process = None
 
-    def _read_until(self, token: str, timeout: float) -> list[str]:
+    def _read_until(self, expected: str, timeout: float) -> list[str]:
         deadline = time.monotonic() + timeout
         lines: list[str] = []
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise UciTimeout(f"Timed out waiting for '{token}' from {self.spec.name}")
-            line = self._next_line(remaining)
-            lines.append(line)
-            if line == token or line.startswith(token + " "):
-                return lines
-
-    def close(self) -> None:
-        process = self.process
-        if process is None:
-            return
-        if process.poll() is None:
+                raise UciTimeout(f"Timed out waiting for {expected!r} from {self.spec.name}")
             try:
-                self.send("quit")
-                process.wait(timeout=2.0)
-            except (UciError, subprocess.TimeoutExpired):
-                process.kill()
-                try:
-                    process.wait(timeout=1.0)
-                except subprocess.TimeoutExpired:
-                    pass
-        for stream in (process.stdin, process.stdout, process.stderr):
-            if stream is not None:
-                try:
-                    stream.close()
-                except OSError:
-                    pass
-        self.process = None
+                line = self._lines.get(timeout=remaining)
+            except queue.Empty as exc:
+                raise UciTimeout(f"Timed out waiting for {expected!r} from {self.spec.name}") from exc
+            if line is None:
+                raise UciError(f"Engine {self.spec.name} closed stdout while waiting for {expected!r}")
+            if line == expected:
+                return lines
+            lines.append(line)
 
     def __enter__(self) -> "UciEngine":
         self.start()
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
+        self.quit()
