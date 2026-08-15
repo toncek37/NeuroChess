@@ -1,0 +1,4 @@
+# Training dependencies will be pinned when the first neural model is implemented.
+torch
+numpy
+python-chess

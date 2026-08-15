@@ -1,0 +1,1 @@
+"""NeuroChess local GUI package."""
