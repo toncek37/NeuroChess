@@ -1,0 +1,31 @@
+name: Apply benchmark parameter logging
+on:
+  push:
+    paths: ['.github/workflows/apply-benchmark-parameter-log.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: prompt-15-onnx-inference}
+      - name: Patch GUI
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p=Path('python/gui/benchmark_app.py')
+          s=p.read_text()
+          old='''        self._append(f"Starting adaptive Stockfish Elo ladder — mode: {mode}")\n\n        cmd = ['''
+          new='''        self._append(f"Starting adaptive Stockfish Elo ladder — mode: {mode}")\n        self._append("Benchmark parameters:")\n        self._append(f"  NeuroChess: {engine}")\n        self._append(f"  Stockfish: {stockfish}")\n        self._append(f"  Mode: {mode}")\n        if mode != "Classical" and model is not None:\n            self._append(f"  ONNX model: {model}")\n            self._append(f"  Value blend: {self.neural_blend_var.get()}%")\n        self._append(f"  Move time: {self.movetime_var.get()} ms/move")\n        self._append(f"  Probe games: {self.probe_var.get()}")\n        self._append(f"  Refine games: {self.refine_var.get()}")\n        self._append(f"  Parallel games: {self.concurrency_var.get()}")\n        self._append(f"  Seed: {self.seed_var.get()}")\n        self._append(f"  Results folder: {output}")\n        self._append("----------------------------------------")\n\n        cmd = ['''
+          if old not in s: raise SystemExit('target not found')
+          p.write_text(s.replace(old,new),encoding='utf-8')
+          PY
+      - run: rm .github/workflows/apply-benchmark-parameter-log.yml
+      - name: Commit
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git commit -m "Print benchmark parameters in Elo log"
+          git push
