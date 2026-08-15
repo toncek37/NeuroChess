@@ -21,47 +21,46 @@ if errorlevel 1 (
     goto :fail
 )
 
-rem CMake needs a real C++ toolchain. A normal Command Prompt does not
-rem automatically expose MSVC even when Visual Studio Build Tools are installed.
+rem A normal Command Prompt does not expose MSVC automatically.
 where cl >nul 2>nul
 if errorlevel 1 (
     set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
     if exist "%VSWHERE%" (
-        for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+        for /f "tokens=*" %%i in ('"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSINSTALL=%%i"
     )
 
     if defined VSINSTALL if exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" (
+        echo Found Visual Studio at: %VSINSTALL%
         echo Activating Visual Studio C++ build environment...
-        call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+        call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
     )
 )
 
 where cl >nul 2>nul
 if errorlevel 1 (
     echo.
-    echo ERROR: No Microsoft C++ compiler was found.
-    echo.
-    echo Install "Visual Studio 2022 Build Tools" and select the workload:
+    echo ERROR: Visual Studio with C++ tools was detected, but cl.exe is still unavailable.
+    echo Open Visual Studio Installer - Modify and verify:
     echo   Desktop development with C++
-    echo.
-    echo Required components include MSVC x64/x86 build tools and a Windows SDK.
-    echo After installation, run this file again; no manual Developer Prompt is needed.
+    echo   MSVC v143 x64/x86 build tools
+    echo   Windows 10/11 SDK
     goto :fail
 )
 
 where nmake >nul 2>nul
 if errorlevel 1 (
-    echo ERROR: MSVC was found, but nmake.exe is unavailable.
-    echo Repair/install the "Desktop development with C++" workload.
+    echo ERROR: MSVC was activated, but nmake.exe is unavailable.
+    echo Repair the Desktop development with C++ workload in Visual Studio Installer.
     goto :fail
 )
 
+echo.
 echo Compiler detected:
-cl 2>&1 | findstr /c:"Compiler Version"
+cl 2>&1 | findstr /i /c:"Compiler" /c:"Microsoft"
 echo.
 
 echo [1/3] Configuring CMake...
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+cmake -S . -B build -G "NMake Makefiles" -DCMAKE_BUILD_TYPE=Release
 if errorlevel 1 (
     echo.
     echo ERROR: CMake configuration failed.
@@ -72,7 +71,7 @@ if errorlevel 1 (
 
 echo.
 echo [2/3] Building NeuroChess...
-cmake --build build --config Release --parallel
+cmake --build build --parallel
 if errorlevel 1 (
     echo.
     echo ERROR: Compilation failed. The compiler output above contains the reason.
@@ -80,8 +79,8 @@ if errorlevel 1 (
 )
 
 set "ENGINE="
-if exist "build\Release\neurochess.exe" set "ENGINE=build\Release\neurochess.exe"
-if not defined ENGINE if exist "build\neurochess.exe" set "ENGINE=build\neurochess.exe"
+if exist "build\neurochess.exe" set "ENGINE=build\neurochess.exe"
+if not defined ENGINE if exist "build\Release\neurochess.exe" set "ENGINE=build\Release\neurochess.exe"
 if not defined ENGINE if exist "build\Debug\neurochess.exe" set "ENGINE=build\Debug\neurochess.exe"
 
 if not defined ENGINE (
