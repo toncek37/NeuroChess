@@ -107,6 +107,7 @@ private:
     SearchConfig config_{};
     std::vector<std::uint64_t> prior_history_;
     std::vector<std::uint64_t> search_history_;
+    std::vector<core::Move> root_neural_order_;
     std::atomic_bool stop_requested_{false};
 
     std::array<std::array<core::Move, 2>, MaxPly> killers_{};
