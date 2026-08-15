@@ -1,0 +1,119 @@
+name: Apply root neural value guidance
+
+on:
+  push:
+    branches: [prompt-15-onnx-inference]
+    paths: ['.github/workflows/apply-root-value-guidance.yml']
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Patch searcher
+        shell: python
+        run: |
+          from pathlib import Path
+
+          p = Path('src/search/searcher.cpp')
+          s = p.read_text()
+
+          old = '''int Searcher::static_evaluate(core::Board& board) {
+    const int classical = evaluator_.evaluate(board);
+    if (!config_.neural_value || !neural_ready()) return classical;
+    try {
+        ++stats_.neural_evaluations;
+        const auto neural_started = std::chrono::steady_clock::now();
+        const auto neural_output = neural_->evaluate(board);
+        stats_.neural_inference_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - neural_started).count());
+        const int neural_cp = nn::wdl_to_centipawns(neural_output);
+        const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+        return (classical * (100 - blend) + neural_cp * blend) / 100;
+    } catch (...) {
+        return classical;
+    }
+}
+'''
+          new = '''int Searcher::static_evaluate(core::Board& board) {
+    // Neural value is deliberately NOT used at every leaf. A single ONNX
+    // evaluation is far more expensive than the classical evaluator and used
+    // to consume ~98% of a 100 ms move budget. Neural value now acts only as
+    // selective root move-order guidance in search_root().
+    return evaluator_.evaluate(board);
+}
+'''
+          if old not in s:
+              raise SystemExit('static_evaluate block not found')
+          s = s.replace(old, new, 1)
+
+          old2 = '''    core::Move tt_move{};
+    if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
+    order_moves(board, moves, tt_move, 0);
+
+    const int alpha_original = alpha;
+'''
+          new2 = '''    core::Move tt_move{};
+    if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
+    order_moves(board, moves, tt_move, 0);
+
+    // Selective neural root guidance. Run it only on the first iterative-
+    // deepening pass, and only for the strongest classical/TT ordered root
+    // candidates. Deeper iterations inherit the improved ordering through the
+    // root TT move, avoiding repeated ONNX cost.
+    if (depth == 1 && config_.neural_value && neural_ready()
+        && config_.neural_value_blend_percent > 0) {
+        constexpr std::size_t max_neural_root_candidates = 12;
+        const std::size_t candidate_count = std::min(max_neural_root_candidates, moves.size());
+        const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+        std::vector<std::pair<core::Move, int>> guided;
+        guided.reserve(candidate_count);
+
+        for (std::size_t i = 0; i < candidate_count; ++i) {
+            if (should_stop()) break;
+            const core::Move move = moves[i];
+            const core::UndoState undo = board.make_move(move);
+            const int classical_root_cp = -evaluator_.evaluate(board);
+            int ordering_cp = classical_root_cp;
+            try {
+                const auto neural_started = std::chrono::steady_clock::now();
+                const auto neural_output = neural_->evaluate(board);
+                stats_.neural_inference_us += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - neural_started).count());
+                ++stats_.neural_evaluations;
+                const int neural_root_cp = -nn::wdl_to_centipawns(neural_output);
+                ordering_cp = (classical_root_cp * (100 - blend) + neural_root_cp * blend) / 100;
+            } catch (...) {
+                // Keep the classical ordering score if inference fails.
+            }
+            board.unmake_move(move, undo);
+            guided.emplace_back(move, ordering_cp);
+        }
+
+        std::stable_sort(guided.begin(), guided.end(), [](const auto& a, const auto& b) {
+            return a.second > b.second;
+        });
+        for (std::size_t i = 0; i < guided.size(); ++i) moves[i] = guided[i].first;
+    }
+
+    const int alpha_original = alpha;
+'''
+          if old2 not in s:
+              raise SystemExit('search_root insertion point not found')
+          s = s.replace(old2, new2, 1)
+          p.write_text(s)
+
+      - name: Commit root guidance
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/search/searcher.cpp
+          git commit -m "Use neural value only for selective root guidance"
+          git push
