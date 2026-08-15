@@ -40,7 +40,17 @@ Searcher::Searcher(std::size_t tt_megabytes,
     : evaluator_(evaluation_config), neural_(nn::make_neural_evaluator()), tt_(tt_megabytes), config_(search_config) {}
 
 bool Searcher::load_neural_model(const std::string& path) {
-    return neural_ && neural_->load_model(path);
+    if (!neural_ || !neural_->load_model(path)) return false;
+    // ONNX Runtime can pay a substantial one-time cost on the first Run().
+    // Do that before a timed search starts so a 100 ms move budget is not
+    // consumed by runtime initialization rather than chess search.
+    try {
+        core::Board warmup_board;
+        (void)neural_->evaluate(warmup_board);
+    } catch (...) {
+        return false;
+    }
+    return true;
 }
 
 bool Searcher::neural_ready() const noexcept {
