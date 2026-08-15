@@ -66,7 +66,12 @@ int Searcher::static_evaluate(core::Board& board) {
     if (!config_.neural_value || !neural_ready()) return classical;
     try {
         ++stats_.neural_evaluations;
-        const int neural_cp = nn::wdl_to_centipawns(neural_->evaluate(board));
+        const auto neural_started = std::chrono::steady_clock::now();
+        const auto neural_output = neural_->evaluate(board);
+        stats_.neural_inference_us += static_cast<std::uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - neural_started).count());
+        const int neural_cp = nn::wdl_to_centipawns(neural_output);
         const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
         return (classical * (100 - blend) + neural_cp * blend) / 100;
     } catch (...) {
@@ -79,7 +84,11 @@ void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, c
     bool have_policy = false;
     if (config_.neural_policy && ply <= config_.neural_policy_max_ply && neural_ready()) {
         try {
+            const auto neural_started = std::chrono::steady_clock::now();
             neural_output = neural_->evaluate(board);
+            stats_.neural_inference_us += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - neural_started).count());
             ++stats_.neural_evaluations;
             have_policy = true;
         } catch (...) {}

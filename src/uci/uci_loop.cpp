@@ -381,8 +381,28 @@ private:
             for (const Move move : result.principal_variation) line << ' ' << move.uci();
         }
         write_line(line.str());
-        if (result.stats.neural_evaluations > 0) {
-            write_line("info string neural_evals " + std::to_string(result.stats.neural_evaluations));
+        {
+            const double neural_ms = static_cast<double>(result.stats.neural_inference_us) / 1000.0;
+            const double search_ms = static_cast<double>(std::max<std::int64_t>(1, result.stats.elapsed.count()));
+            const double neural_share = 100.0 * neural_ms / search_ms;
+            std::ostringstream profile;
+            profile << "info string nc_profile"
+                    << " depth=" << result.stats.depth
+                    << " seldepth=" << result.stats.selective_depth
+                    << " nodes=" << result.stats.nodes
+                    << " nps=" << result.stats.nps
+                    << " elapsed_ms=" << result.stats.elapsed.count()
+                    << " neural_calls=" << result.stats.neural_evaluations
+                    << " neural_us=" << result.stats.neural_inference_us
+                    << " neural_ms=" << neural_ms
+                    << " neural_share_pct=" << neural_share;
+            if (result.stats.neural_evaluations > 0) {
+                profile << " avg_neural_us="
+                        << (result.stats.neural_inference_us / result.stats.neural_evaluations);
+            } else {
+                profile << " avg_neural_us=0";
+            }
+            write_line(profile.str());
         }
     }
 

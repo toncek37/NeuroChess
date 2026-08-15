@@ -58,6 +58,7 @@ struct SearchStats {
     std::uint64_t razor_prunes = 0;
     std::uint64_t aspiration_researches = 0;
     std::uint64_t neural_evaluations = 0;
+    std::uint64_t neural_inference_us = 0;
     std::chrono::milliseconds elapsed{0};
     std::uint64_t nps = 0;
 };
