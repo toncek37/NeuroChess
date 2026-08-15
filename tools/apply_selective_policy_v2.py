@@ -1,0 +1,86 @@
+from pathlib import Path
+
+h = Path('include/neurochess/search/searcher.h')
+s = h.read_text()
+s = s.replace(
+    '    std::vector<core::Move> root_neural_order_;\n    std::atomic_bool stop_requested_{false};',
+    '    std::vector<core::Move> root_neural_order_;\n    int selective_policy_calls_used_ = 0;\n    std::atomic_bool stop_requested_{false};',
+    1,
+)
+s = s.replace(
+    '    void order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply);',
+    '    void order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply,\n                     bool allow_selective_value_policy = false);',
+    1,
+)
+h.write_text(s)
+
+p = Path('src/search/searcher.cpp')
+s = p.read_text()
+old = '''void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
+    nn::NeuralOutput neural_output;
+    bool have_policy = false;
+    if (config_.neural_policy && ply <= config_.neural_policy_max_ply && neural_ready()) {
+        try {
+            const auto neural_started = std::chrono::steady_clock::now();
+            neural_output = neural_->evaluate(board);
+            stats_.neural_inference_us += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - neural_started).count());
+            ++stats_.neural_evaluations;
+            have_policy = true;
+        } catch (...) {}
+    }
+'''
+new = '''void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply,
+                           bool allow_selective_value_policy) {
+    nn::NeuralOutput neural_output;
+    bool have_policy = false;
+    const bool regular_policy = config_.neural_policy
+        && ply <= config_.neural_policy_max_ply;
+    const bool selective_value_policy = allow_selective_value_policy
+        && config_.neural_value
+        && config_.neural_value_blend_percent > 0
+        && ply == 1
+        && selective_policy_calls_used_ < 4;
+    if ((regular_policy || selective_value_policy) && neural_ready()) {
+        if (selective_value_policy) ++selective_policy_calls_used_;
+        try {
+            const auto neural_started = std::chrono::steady_clock::now();
+            neural_output = neural_->evaluate(board);
+            stats_.neural_inference_us += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - neural_started).count());
+            ++stats_.neural_evaluations;
+            have_policy = true;
+        } catch (...) {}
+    }
+'''
+if old not in s:
+    raise SystemExit('order_moves block not found')
+s = s.replace(old, new, 1)
+s = s.replace(
+    '    root_neural_order_.clear();\n    start_time_ = std::chrono::steady_clock::now();',
+    '    root_neural_order_.clear();\n    selective_policy_calls_used_ = 0;\n    start_time_ = std::chrono::steady_clock::now();',
+    1,
+)
+s = s.replace('    order_moves(board, moves, tt_move, 0);',
+              '    order_moves(board, moves, tt_move, 0, false);', 1)
+marker = '''            try {
+                const auto neural_started = std::chrono::steady_clock::now();
+                const auto neural_output = neural_->evaluate(board);'''
+replacement = '''            try {
+                ++selective_policy_calls_used_;
+                const auto neural_started = std::chrono::steady_clock::now();
+                const auto neural_output = neural_->evaluate(board);'''
+if marker not in s:
+    raise SystemExit('root inference marker not found')
+s = s.replace(marker, replacement, 1)
+target = '    order_moves(board, moves, tt_move, ply);'
+if target not in s:
+    raise SystemExit('negamax order_moves call not found')
+s = s.replace(target, '    order_moves(board, moves, tt_move, ply, true);', 1)
+qtarget = '    order_moves(board, moves, core::Move{}, ply);'
+if qtarget not in s:
+    raise SystemExit('qsearch order_moves call not found')
+s = s.replace(qtarget, '    order_moves(board, moves, core::Move{}, ply, false);', 1)
+p.write_text(s)
