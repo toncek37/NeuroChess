@@ -39,6 +39,8 @@ def main() -> int:
         raise SystemExit("--positions must be at least 6")
     if args.random_top < 1:
         raise SystemExit("--random-top must be positive")
+    if args.sample_every < 1:
+        raise SystemExit("--sample-every must be positive")
 
     rng = random.Random(args.seed)
     groups = [(side, outcome) for side in ("white", "black") for outcome in ("losing", "equal", "winning")]
@@ -61,7 +63,12 @@ def main() -> int:
                 labels = labels_from_analysis(board, infos)
                 cp = int(labels["value_cp"])
                 group = (side_name(board.turn), bucket(cp))
-                if board.ply() >= args.min_ply and board.ply() % args.sample_every == 0 and kept[group] < quotas[group]:
+
+                # Do not use board.ply() % sample_every here: with sample_every=2
+                # that permanently selects only one side to move. Random thinning keeps
+                # the requested sampling rate without introducing a colour/parity bias.
+                sample_this_position = args.sample_every == 1 or rng.randrange(args.sample_every) == 0
+                if board.ply() >= args.min_ply and sample_this_position and kept[group] < quotas[group]:
                     record = {
                         "fen": board.fen(),
                         "source": "stockfish-selfplay-side-balanced",
