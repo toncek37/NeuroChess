@@ -51,7 +51,7 @@ class ValueDebuggerApp(tk.Tk):
         root.columnconfigure(1, weight=1)
         root.rowconfigure(7, weight=1)
         ttk.Label(root, text="Neural Value Debugger", font=("Segoe UI", 16, "bold")).grid(row=0, column=0, columnspan=3, sticky="w")
-        ttk.Label(root, text="Compares ONNX WDL/value against teacher-labelled positions and runs orientation sanity checks.").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 12))
+        ttk.Label(root, text="Compares ONNX WDL/value against teacher-labelled positions and runs synthetic extrapolation checks.").grid(row=1, column=0, columnspan=3, sticky="w", pady=(2, 12))
         self._path_row(root, 2, "ONNX model", self.model, self._pick_model)
         self._path_row(root, 3, "Labelled dataset", self.dataset, self._pick_dataset)
         self._path_row(root, 4, "Report JSON", self.output, self._pick_output)
@@ -109,7 +109,12 @@ class ValueDebuggerApp(tk.Tk):
                 elif kind=="done":
                     r=val; self.start_btn.configure(state="normal"); self.status.set("Completed")
                     m=r.metrics
-                    text=f"Pearson {m.pearson_cp:.3f} | MAE {m.mae_cp:.0f} cp | sign agreement {m.sign_agreement_percent:.1f}% | orientation {'PASS' if r.orientation_passed else 'FAIL'}\n{r.recommendation}"
+                    text=(
+                        f"WDL corr {m.pearson_wdl_score:.3f} | clipped-cp corr {m.pearson_cp:.3f} | "
+                        f"MAE {m.mae_cp_clipped:.0f} cp | sign {m.sign_agreement_percent:.1f}% "
+                        f"(W {m.white_to_move_sign_agreement:.1f}% / B {m.black_to_move_sign_agreement:.1f}%)\n"
+                        f"{r.recommendation}"
+                    )
                     self.summary.configure(text=text)
                     self._append(f"Report saved: {self.output.get()}")
         except queue.Empty:
