@@ -13,6 +13,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Install Tk for inherited GUI import test
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
       - name: Configure classical build
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNEUROCHESS_BUILD_BENCHMARKS=OFF
       - name: Build
@@ -20,7 +22,7 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
       - name: Python syntax
-        run: python -m py_compile python/training/export_onnx.py python/gui/neural_setup_app.py
+        run: python -m py_compile python/training/export_onnx.py python/gui/neural_setup_app.py python/gui/benchmark_app.py
 
   onnx-build:
     runs-on: ubuntu-latest
@@ -28,6 +30,8 @@ jobs:
       ORT_VERSION: 1.29.0
     steps:
       - uses: actions/checkout@v4
+      - name: Install Tk for inherited GUI import test
+        run: sudo apt-get update && sudo apt-get install -y python3-tk
       - name: Download official ONNX Runtime CPU package
         run: |
           curl -L --fail -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
