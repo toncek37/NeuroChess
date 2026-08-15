@@ -4,48 +4,20 @@ on:
   push:
     paths:
       - '.github/workflows/bootstrap-import.yml'
-  workflow_dispatch:
-
-permissions:
-  contents: write
 
 jobs:
-  import:
+  diagnose:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Reassemble and verify source archive
+      - uses: actions/checkout@v4
+      - name: Check split parts
         shell: bash
         run: |
           set -euo pipefail
-          : > /tmp/neurochess.b64
-          for p in \
-            .bootstrap/part_00 .bootstrap/part_01 .bootstrap/part_02 .bootstrap/part_03 .bootstrap/part_04 \
-            .bootstrap/part_05_0 .bootstrap/part_05_1 .bootstrap/part_05_2 \
-            .bootstrap/part_06 \
-            .bootstrap/part_07_0 .bootstrap/part_07_1 .bootstrap/part_07_2 \
-            .bootstrap/part_08 \
-            .bootstrap/part_09_0 .bootstrap/part_09_1 .bootstrap/part_09_2 \
-            .bootstrap/part_10_0; do
-            tr -d '\r\n' < "$p" >> /tmp/neurochess.b64
+          for p in .bootstrap/part_05_0 .bootstrap/part_05_1 .bootstrap/part_05_2 .bootstrap/part_07_0 .bootstrap/part_07_1 .bootstrap/part_07_2 .bootstrap/part_09_0 .bootstrap/part_09_1 .bootstrap/part_09_2 .bootstrap/part_10_0; do
+            tr -d '\r\n' < "$p" > /tmp/p
+            printf '%s ' "$p"
+            wc -c < /tmp/p | tr -d '\n'
+            printf ' '
+            sha256sum /tmp/p | cut -d' ' -f1
           done
-          echo "68ccc3ba4bf252796a0e9f10804e8c5f771dd7d6ca1c2d4976dc0cdcecfe39bc  /tmp/neurochess.b64" | sha256sum -c -
-          base64 -d /tmp/neurochess.b64 > /tmp/neurochess.tar.gz
-          echo "1c099a33ff74e6eda0c28ffa4d680858eb268f11cb0e36ce31cb78f8a3f9059f  /tmp/neurochess.tar.gz" | sha256sum -c -
-          tar -xzf /tmp/neurochess.tar.gz -C .
-          rm -rf .bootstrap
-          rm -f .github/workflows/bootstrap.yml .github/workflows/bootstrap-import.yml
-
-      - name: Commit imported project
-        shell: bash
-        run: |
-          set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -m "Import NeuroChess v0.12.6 source tree"
-          git push origin HEAD:main
