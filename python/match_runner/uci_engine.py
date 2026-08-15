@@ -30,10 +30,6 @@ class EngineSpec:
     def from_command(name: str, command: str | Iterable[str], *, options: dict[str, str | int | bool] | None = None,
                      cwd: str | None = None) -> "EngineSpec":
         if isinstance(command, str):
-            # GUI/file-picker callers pass a concrete executable path. Treat an
-            # existing path as one argv element before attempting shell-like parsing:
-            # POSIX shlex would otherwise consume Windows backslashes and a path with
-            # spaces would be split into multiple arguments.
             candidate = Path(command.strip().strip('"'))
             if candidate.is_file():
                 args = (str(candidate),)
@@ -177,6 +173,10 @@ class UciEngine:
         finally:
             self.process = None
 
+    def close(self) -> None:
+        """Idempotent compatibility alias used by tournament code."""
+        self.quit()
+
     def _read_until(self, expected: str, timeout: float) -> list[str]:
         deadline = time.monotonic() + timeout
         lines: list[str] = []
@@ -199,4 +199,4 @@ class UciEngine:
         return self
 
     def __exit__(self, exc_type, exc, tb) -> None:
-        self.quit()
+        self.close()
