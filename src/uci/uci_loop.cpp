@@ -139,6 +139,7 @@ private:
     std::vector<std::uint64_t> position_history_;
     SearchConfig config_{};
     std::size_t hash_megabytes_ = 16;
+    std::string neural_model_;
     std::unique_ptr<Searcher> searcher_;
     std::thread search_thread_;
     bool quit_ = false;
@@ -162,6 +163,10 @@ private:
         write_line("option name Aspiration Windows type check default true");
         write_line("option name Futility Pruning type check default true");
         write_line("option name Razoring type check default true");
+        write_line("option name Neural Model type string default <empty>");
+        write_line("option name Neural Policy type check default false");
+        write_line("option name Neural Value type check default false");
+        write_line("option name Neural Value Blend type spin default 50 min 0 max 100");
         write_line("uciok");
     }
 
@@ -256,6 +261,7 @@ private:
             hash_megabytes_ = static_cast<std::size_t>(std::clamp(*parsed, 1, 4096));
             searcher_ = std::make_unique<Searcher>(hash_megabytes_, neurochess::search::EvaluationConfig{}, config_);
             searcher_->set_position_history(position_history_);
+            if (!neural_model_.empty()) (void)searcher_->load_neural_model(neural_model_);
             return;
         }
 
@@ -267,7 +273,16 @@ private:
         else if (name == "aspiration windows") update_bool(config_.aspiration_windows);
         else if (name == "futility pruning") update_bool(config_.futility_pruning);
         else if (name == "razoring") update_bool(config_.razoring);
-        else {
+        else if (name == "neural policy") update_bool(config_.neural_policy);
+        else if (name == "neural value") update_bool(config_.neural_value);
+        else if (name == "neural value blend") {
+            if (const auto parsed = parse_int(value)) config_.neural_value_blend_percent = std::clamp(*parsed, 0, 100);
+        } else if (name == "neural model") {
+            neural_model_ = value;
+            const bool ok = !neural_model_.empty() && searcher_->load_neural_model(neural_model_);
+            write_line(std::string("info string neural model ") + (ok ? "loaded via " + searcher_->neural_backend() : "not loaded"));
+            return;
+        } else {
             write_line("info string unknown option: " + join(name_parts));
             return;
         }
@@ -357,6 +372,7 @@ private:
         }
         line << " nodes " << result.stats.nodes
              << " nps " << result.stats.nps
+             << " string neural_evals=" << result.stats.neural_evaluations
              << " time " << result.stats.elapsed.count();
         if (!result.principal_variation.empty()) {
             line << " pv";

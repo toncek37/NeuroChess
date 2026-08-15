@@ -37,7 +37,55 @@ bool is_quiet(Move move) noexcept {
 Searcher::Searcher(std::size_t tt_megabytes,
                    EvaluationConfig evaluation_config,
                    SearchConfig search_config)
-    : evaluator_(evaluation_config), tt_(tt_megabytes), config_(search_config) {}
+    : evaluator_(evaluation_config), neural_(nn::make_neural_evaluator()), tt_(tt_megabytes), config_(search_config) {}
+
+bool Searcher::load_neural_model(const std::string& path) {
+    return neural_ && neural_->load_model(path);
+}
+
+bool Searcher::neural_ready() const noexcept {
+    return neural_ && neural_->is_ready();
+}
+
+std::string Searcher::neural_backend() const {
+    return neural_ ? neural_->backend_name() : "none";
+}
+
+int Searcher::static_evaluate(core::Board& board) {
+    const int classical = evaluator_.evaluate(board);
+    if (!config_.neural_value || !neural_ready()) return classical;
+    try {
+        ++stats_.neural_evaluations;
+        const int neural_cp = nn::wdl_to_centipawns(neural_->evaluate(board));
+        const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+        return (classical * (100 - blend) + neural_cp * blend) / 100;
+    } catch (...) {
+        return classical;
+    }
+}
+
+void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
+    nn::NeuralOutput neural_output;
+    bool have_policy = false;
+    if (config_.neural_policy && neural_ready()) {
+        try {
+            neural_output = neural_->evaluate(board);
+            ++stats_.neural_evaluations;
+            have_policy = true;
+        } catch (...) {}
+    }
+    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
+        auto score = [&](core::Move move) {
+            long long value = move_order_score(board, move, tt_move, ply);
+            if (have_policy) {
+                const float logit = nn::policy_logit_for_move(neural_output, move);
+                if (std::isfinite(logit)) value += static_cast<long long>(config_.neural_policy_scale * logit);
+            }
+            return value;
+        };
+        return score(a) > score(b);
+    });
+}
 
 void Searcher::set_position_history(std::vector<std::uint64_t> hashes) {
     prior_history_ = std::move(hashes);
@@ -130,9 +178,7 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
 
     core::Move tt_move{};
     if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, tt_move, 0) > move_order_score(board, b, tt_move, 0);
-    });
+    order_moves(board, moves, tt_move, 0);
 
     const int alpha_original = alpha;
     int best_score = -Infinity;
@@ -164,7 +210,7 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
 }
 
 int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int beta, bool allow_null) {
-    if (ply >= MaxPly - 1) return evaluator_.evaluate(board);
+    if (ply >= MaxPly - 1) return static_evaluate(board);
     ++stats_.nodes;
     stats_.selective_depth = std::max(stats_.selective_depth, ply);
     if (should_stop()) {
@@ -193,7 +239,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
     if (depth <= 0) return quiescence(board, ply, alpha, beta);
 
     const bool in_check = board.in_check(board.side_to_move());
-    const int static_eval = in_check ? -Infinity : evaluator_.evaluate(board);
+    const int static_eval = in_check ? -Infinity : static_evaluate(board);
 
     if (config_.razoring && !in_check && depth <= 2
         && static_eval + config_.razor_margin_cp * depth <= alpha) {
@@ -224,9 +270,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
     auto moves = core::MoveGenerator::legal(board);
     if (moves.empty()) return in_check ? (-MateScore + ply) : 0;
 
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, tt_move, ply) > move_order_score(board, b, tt_move, ply);
-    });
+    order_moves(board, moves, tt_move, ply);
 
     int best_score = -Infinity;
     core::Move best_move{};
@@ -291,7 +335,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
 }
 
 int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
-    if (ply >= MaxPly - 1) return evaluator_.evaluate(board);
+    if (ply >= MaxPly - 1) return static_evaluate(board);
     ++stats_.nodes;
     ++stats_.qnodes;
     stats_.selective_depth = std::max(stats_.selective_depth, ply);
@@ -305,7 +349,7 @@ int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
 
     const bool in_check = board.in_check(board.side_to_move());
     if (!in_check) {
-        const int stand_pat = evaluator_.evaluate(board);
+        const int stand_pat = static_evaluate(board);
         if (stand_pat >= beta) return stand_pat;
         alpha = std::max(alpha, stand_pat);
     }
@@ -320,9 +364,7 @@ int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
         if (moves.empty()) return alpha;
     }
 
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, core::Move{}, ply) > move_order_score(board, b, core::Move{}, ply);
-    });
+    order_moves(board, moves, core::Move{}, ply);
 
     for (const core::Move move : moves) {
         const core::UndoState undo = board.make_move(move);
