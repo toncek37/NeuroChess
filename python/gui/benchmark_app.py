@@ -237,6 +237,20 @@ class BenchmarkApp(tk.Tk):
         self.stop_btn.configure(state="normal")
         mode = self.neural_mode_var.get()
         self._append(f"Starting adaptive Stockfish Elo ladder — mode: {mode}")
+        self._append("Benchmark parameters:")
+        self._append(f"  NeuroChess: {engine}")
+        self._append(f"  Stockfish: {stockfish}")
+        self._append(f"  Mode: {mode}")
+        if mode != "Classical" and model is not None:
+            self._append(f"  ONNX model: {model}")
+            self._append(f"  Value blend: {self.neural_blend_var.get()}%")
+        self._append(f"  Move time: {self.movetime_var.get()} ms/move")
+        self._append(f"  Probe games: {self.probe_var.get()}")
+        self._append(f"  Refine games: {self.refine_var.get()}")
+        self._append(f"  Parallel games: {self.concurrency_var.get()}")
+        self._append(f"  Seed: {self.seed_var.get()}")
+        self._append(f"  Results folder: {output}")
+        self._append("----------------------------------------")
 
         cmd = [
             sys.executable, "-u", "-m", "match_runner.ladder_cli",
