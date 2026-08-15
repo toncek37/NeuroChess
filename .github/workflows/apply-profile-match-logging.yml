@@ -1,0 +1,54 @@
+name: Apply match profiler logging
+on:
+  push:
+    branches: [prompt-15-onnx-inference]
+    paths: [.github/workflows/apply-profile-match-logging.yml]
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Patch match runner
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path('python/match_runner/match.py')
+          s = p.read_text()
+          old = '''    move_times_ms: list[float]\n    pgn: str\n    engine_a_score: float\n'''
+          new = '''    move_times_ms: list[float]\n    neuro_profiles: list[dict[str, float]]\n    pgn: str\n    engine_a_score: float\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''    move_times_ms: list[float] = []\n    clocks = {chess.WHITE: float(config.time_control.base_ms), chess.BLACK: float(config.time_control.base_ms)}\n'''
+          new = '''    move_times_ms: list[float] = []\n    neuro_profiles: list[dict[str, float]] = []\n    clocks = {chess.WHITE: float(config.time_control.base_ms), chess.BLACK: float(config.time_control.base_ms)}\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''                bestmove, _info, elapsed = engine.bestmove(go, timeout)\n'''
+          new = '''                bestmove, _info, elapsed = engine.bestmove(go, timeout)\n                for info_line in _info:\n                    prefix = "info string nc_profile "\n                    if not info_line.startswith(prefix):\n                        continue\n                    values: dict[str, float] = {}\n                    for item in info_line[len(prefix):].split():\n                        if "=" not in item:\n                            continue\n                        key, raw = item.split("=", 1)\n                        try:\n                            values[key] = float(raw)\n                        except ValueError:\n                            pass\n                    if values:\n                        neuro_profiles.append(values)\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''        move_times_ms=move_times_ms,\n        pgn=pgn,\n'''
+          new = '''        move_times_ms=move_times_ms,\n        neuro_profiles=neuro_profiles,\n        pgn=pgn,\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+
+          old = '''            print(\n                f"[{result.game_index + 1:>4}/{config.games}] {result.white} - {result.black} "\n                f"{result.result} ({result.termination})"\n            )\n'''
+          new = '''            print(\n                f"[{result.game_index + 1:>4}/{config.games}] {result.white} - {result.black} "\n                f"{result.result} ({result.termination})"\n            )\n            if result.neuro_profiles:\n                profiles = result.neuro_profiles\n                def avg(key: str) -> float:\n                    vals = [p[key] for p in profiles if key in p]\n                    return sum(vals) / len(vals) if vals else 0.0\n                print(\n                    "       nc_profile avg: "\n                    f"moves={len(profiles)} depth={avg('depth'):.2f} seldepth={avg('seldepth'):.2f} "\n                    f"nodes={avg('nodes'):.0f} nps={avg('nps'):.0f} "\n                    f"neural_calls={avg('neural_calls'):.1f} neural_ms={avg('neural_ms'):.1f} "\n                    f"neural_share={avg('neural_share_pct'):.1f}% avg_call_us={avg('avg_neural_us'):.0f}"\n                )\n'''
+          assert old in s
+          s = s.replace(old, new, 1)
+          p.write_text(s)
+      - name: Syntax check
+        run: python -m py_compile python/match_runner/match.py
+      - name: Commit
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add python/match_runner/match.py
+          git commit -m "Log neural search profiles in match runner"
+          git push
