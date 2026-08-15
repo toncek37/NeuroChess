@@ -1,0 +1,27 @@
+name: Apply persistent root neural guidance
+
+on:
+  push:
+    branches: [prompt-15-onnx-inference]
+    paths:
+      - '.github/workflows/apply-persistent-root-guidance.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Patch searcher
+        run: python .github/scripts/apply_persistent_root_guidance.py
+      - name: Commit persistent guidance
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add src/search/searcher.cpp
+          git commit -m "Persist pure neural root ordering across search depths"
+          git push

@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 
 namespace neurochess::search {
 namespace {
@@ -37,8 +38,63 @@ bool is_quiet(Move move) noexcept {
 Searcher::Searcher(std::size_t tt_megabytes,
                    EvaluationConfig evaluation_config,
                    SearchConfig search_config)
-    : evaluator_(evaluation_config), tt_(tt_megabytes), config_(search_config) {}
+    : evaluator_(evaluation_config), neural_(nn::make_neural_evaluator()), tt_(tt_megabytes), config_(search_config) {}
 
+bool Searcher::load_neural_model(const std::string& path) {
+    if (!neural_ || !neural_->load_model(path)) return false;
+    // ONNX Runtime can pay a substantial one-time cost on the first Run().
+    // Do that before a timed search starts so a 100 ms move budget is not
+    // consumed by runtime initialization rather than chess search.
+    try {
+        core::Board warmup_board;
+        (void)neural_->evaluate(warmup_board);
+    } catch (...) {
+        return false;
+    }
+    return true;
+}
+
+bool Searcher::neural_ready() const noexcept {
+    return neural_ && neural_->is_ready();
+}
+
+std::string Searcher::neural_backend() const {
+    return neural_ ? neural_->backend_name() : "none";
+}
+
+int Searcher::static_evaluate(core::Board& board) {
+    // Neural value is deliberately not used at every leaf. ONNX leaf
+    // evaluation consumed about 98% of a 100 ms move budget in profiling.
+    // Value inference is now reserved for selective root guidance.
+    return evaluator_.evaluate(board);
+}
+
+void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
+    nn::NeuralOutput neural_output;
+    bool have_policy = false;
+    if (config_.neural_policy && ply <= config_.neural_policy_max_ply && neural_ready()) {
+        try {
+            const auto neural_started = std::chrono::steady_clock::now();
+            neural_output = neural_->evaluate(board);
+            stats_.neural_inference_us += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - neural_started).count());
+            ++stats_.neural_evaluations;
+            have_policy = true;
+        } catch (...) {}
+    }
+    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
+        auto score = [&](core::Move move) {
+            long long value = move_order_score(board, move, tt_move, ply);
+            if (have_policy) {
+                const float logit = nn::policy_logit_for_move(neural_output, move);
+                if (std::isfinite(logit)) value += static_cast<long long>(config_.neural_policy_scale * logit);
+            }
+            return value;
+        };
+        return score(a) > score(b);
+    });
+}
 void Searcher::set_position_history(std::vector<std::uint64_t> hashes) {
     prior_history_ = std::move(hashes);
 }
@@ -62,12 +118,20 @@ SearchResult Searcher::search(core::Board& board, SearchLimits limits) {
 
     stats_ = {};
     reset_heuristics();
+    root_classical_order_.clear();
+    root_neural_order_.clear();
     start_time_ = std::chrono::steady_clock::now();
     search_history_ = prior_history_;
     search_history_.push_back(board.zobrist_key());
 
     SearchResult best{};
     const auto initial_legal_moves = core::MoveGenerator::legal(board);
+    // Keep a legal fallback from the moment search starts. Neural inference can
+    // consume the entire small time budget before depth 1 completes; returning
+    // a default Move{} in that case is an illegal UCI 0000 move.
+    if (!initial_legal_moves.empty()) {
+        best.best_move = initial_legal_moves.front();
+    }
     if (initial_legal_moves.empty()) {
         best.score = board.in_check(board.side_to_move()) ? -MateScore : 0;
         best.completed = true;
@@ -120,6 +184,17 @@ SearchResult Searcher::search(core::Board& board, SearchLimits limits) {
     stats_.nps = elapsed_us > 0
         ? static_cast<std::uint64_t>((stats_.nodes * 1'000'000ULL) / static_cast<std::uint64_t>(elapsed_us))
         : stats_.nodes;
+
+    auto rank_in = [](const std::vector<core::Move>& ordered, core::Move move) -> int {
+        if (move.raw() == 0) return 0;
+        const auto it = std::find(ordered.begin(), ordered.end(), move);
+        return it == ordered.end() ? 0 : static_cast<int>(std::distance(ordered.begin(), it)) + 1;
+    };
+    stats_.root_classical_best_rank = rank_in(root_classical_order_, best.best_move);
+    stats_.root_policy_best_rank = rank_in(root_neural_order_, best.best_move);
+    if (stats_.root_classical_best_rank > 0 && stats_.root_policy_best_rank > 0) {
+        stats_.root_policy_rank_gain = stats_.root_classical_best_rank - stats_.root_policy_best_rank;
+    }
     best.stats = stats_;
     return best;
 }
@@ -130,9 +205,53 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
 
     core::Move tt_move{};
     if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, tt_move, 0) > move_order_score(board, b, tt_move, 0);
-    });
+    order_moves(board, moves, tt_move, 0);
+    if (root_classical_order_.empty()) root_classical_order_ = moves;
+
+    // One neural inference on the current root position provides policy logits
+    // for every legal move. Cache that ordering for the whole iterative-
+    // deepening search. TT remains the highest-priority root move; policy then
+    // orders the remaining moves, while actual tree scores stay classical.
+    if (config_.neural_value && neural_ready() && config_.neural_value_blend_percent > 0) {
+        if (root_neural_order_.empty()) {
+            try {
+                const auto neural_started = std::chrono::steady_clock::now();
+                const auto neural_output = neural_->evaluate(board);
+                stats_.neural_inference_us += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - neural_started).count());
+                ++stats_.neural_evaluations;
+
+                std::vector<std::pair<core::Move, float>> policy_ranked;
+                policy_ranked.reserve(moves.size());
+                for (const core::Move move : moves) {
+                    float logit = nn::policy_logit_for_move(neural_output, move);
+                    if (!std::isfinite(logit)) logit = -std::numeric_limits<float>::infinity();
+                    policy_ranked.emplace_back(move, logit);
+                }
+                std::stable_sort(policy_ranked.begin(), policy_ranked.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
+                root_neural_order_.reserve(policy_ranked.size());
+                for (const auto& item : policy_ranked) root_neural_order_.push_back(item.first);
+            } catch (...) {
+                // If inference fails, normal TT/history ordering remains intact.
+            }
+        }
+
+        if (!root_neural_order_.empty()) {
+            std::vector<core::Move> reordered;
+            reordered.reserve(moves.size());
+            if (tt_move.raw() != 0 && contains_move(moves, tt_move)) reordered.push_back(tt_move);
+            for (const core::Move preferred : root_neural_order_) {
+                if (preferred != tt_move && contains_move(moves, preferred)) reordered.push_back(preferred);
+            }
+            for (const core::Move move : moves) {
+                if (!contains_move(reordered, move)) reordered.push_back(move);
+            }
+            moves.swap(reordered);
+        }
+    }
 
     const int alpha_original = alpha;
     int best_score = -Infinity;
@@ -164,7 +283,7 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
 }
 
 int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int beta, bool allow_null) {
-    if (ply >= MaxPly - 1) return evaluator_.evaluate(board);
+    if (ply >= MaxPly - 1) return static_evaluate(board);
     ++stats_.nodes;
     stats_.selective_depth = std::max(stats_.selective_depth, ply);
     if (should_stop()) {
@@ -224,9 +343,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
     auto moves = core::MoveGenerator::legal(board);
     if (moves.empty()) return in_check ? (-MateScore + ply) : 0;
 
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, tt_move, ply) > move_order_score(board, b, tt_move, ply);
-    });
+    order_moves(board, moves, tt_move, ply);
 
     int best_score = -Infinity;
     core::Move best_move{};
@@ -291,7 +408,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
 }
 
 int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
-    if (ply >= MaxPly - 1) return evaluator_.evaluate(board);
+    if (ply >= MaxPly - 1) return static_evaluate(board);
     ++stats_.nodes;
     ++stats_.qnodes;
     stats_.selective_depth = std::max(stats_.selective_depth, ply);
@@ -305,7 +422,7 @@ int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
 
     const bool in_check = board.in_check(board.side_to_move());
     if (!in_check) {
-        const int stand_pat = evaluator_.evaluate(board);
+        const int stand_pat = static_evaluate(board);
         if (stand_pat >= beta) return stand_pat;
         alpha = std::max(alpha, stand_pat);
     }
@@ -320,9 +437,7 @@ int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
         if (moves.empty()) return alpha;
     }
 
-    std::stable_sort(moves.begin(), moves.end(), [&](core::Move a, core::Move b) {
-        return move_order_score(board, a, core::Move{}, ply) > move_order_score(board, b, core::Move{}, ply);
-    });
+    order_moves(board, moves, core::Move{}, ply);
 
     for (const core::Move move : moves) {
         const core::UndoState undo = board.make_move(move);

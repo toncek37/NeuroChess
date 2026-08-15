@@ -1,0 +1,28 @@
+name: Apply root policy diagnostics
+
+on:
+  push:
+    branches: [prompt-15-onnx-inference]
+    paths:
+      - tools/apply_root_policy_diagnostics.py
+      - .github/workflows/apply-root-policy-diagnostics.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Apply patch
+        run: python tools/apply_root_policy_diagnostics.py
+      - name: Commit patch
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add include/neurochess/search/searcher.h src/search/searcher.cpp src/uci/uci_loop.cpp python/match_runner/match.py
+          git commit -m "Restore root-only policy and add ordering diagnostics"
+          git push

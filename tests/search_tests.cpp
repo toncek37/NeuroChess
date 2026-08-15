@@ -2,6 +2,7 @@
 #include "neurochess/core/move_generator.h"
 #include "neurochess/search/searcher.h"
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <iostream>
@@ -113,12 +114,17 @@ void test_node_limit_interrupts_safely() {
 
 void test_time_limit_interrupts_safely() {
     Board board;
+    const auto legal = neurochess::core::MoveGenerator::legal(board);
     Searcher searcher(1);
     SearchLimits limits;
-    limits.max_time = std::chrono::milliseconds(5);
+    limits.max_time = std::chrono::milliseconds(1);
     const auto result = searcher.search(board, limits);
     assert(result.stats.elapsed < std::chrono::milliseconds(500));
     assert(board.to_fen() == Board::StartFen);
+    // Even if depth 1 cannot finish before the deadline, a playable position
+    // must never produce the null/default UCI move 0000.
+    assert(result.best_move.raw() != 0);
+    assert(std::find(legal.begin(), legal.end(), result.best_move) != legal.end());
 }
 
 } // namespace

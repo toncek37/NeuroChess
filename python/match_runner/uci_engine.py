@@ -171,6 +171,12 @@ class UciEngine:
                         process.kill()
                         process.wait(timeout=1.0)
         finally:
+            for stream in (process.stdin, process.stdout, process.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError:
+                        pass
             self.process = None
 
     def close(self) -> None:

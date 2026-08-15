@@ -139,6 +139,7 @@ private:
     std::vector<std::uint64_t> position_history_;
     SearchConfig config_{};
     std::size_t hash_megabytes_ = 16;
+    std::string neural_model_;
     std::unique_ptr<Searcher> searcher_;
     std::thread search_thread_;
     bool quit_ = false;
@@ -162,6 +163,11 @@ private:
         write_line("option name Aspiration Windows type check default true");
         write_line("option name Futility Pruning type check default true");
         write_line("option name Razoring type check default true");
+        write_line("option name Neural Model type string default <empty>");
+        write_line("option name Neural Policy type check default false");
+        write_line("option name Neural Policy Max Ply type spin default 2 min 0 max 16");
+        write_line("option name Neural Value type check default false");
+        write_line("option name Neural Value Blend type spin default 50 min 0 max 100");
         write_line("uciok");
     }
 
@@ -256,6 +262,7 @@ private:
             hash_megabytes_ = static_cast<std::size_t>(std::clamp(*parsed, 1, 4096));
             searcher_ = std::make_unique<Searcher>(hash_megabytes_, neurochess::search::EvaluationConfig{}, config_);
             searcher_->set_position_history(position_history_);
+            if (!neural_model_.empty()) (void)searcher_->load_neural_model(neural_model_);
             return;
         }
 
@@ -267,7 +274,18 @@ private:
         else if (name == "aspiration windows") update_bool(config_.aspiration_windows);
         else if (name == "futility pruning") update_bool(config_.futility_pruning);
         else if (name == "razoring") update_bool(config_.razoring);
-        else {
+        else if (name == "neural policy") update_bool(config_.neural_policy);
+        else if (name == "neural policy max ply") {
+            if (const auto parsed = parse_int(value)) config_.neural_policy_max_ply = std::clamp(*parsed, 0, 16);
+        } else if (name == "neural value") update_bool(config_.neural_value);
+        else if (name == "neural value blend") {
+            if (const auto parsed = parse_int(value)) config_.neural_value_blend_percent = std::clamp(*parsed, 0, 100);
+        } else if (name == "neural model") {
+            neural_model_ = value;
+            const bool ok = !neural_model_.empty() && searcher_->load_neural_model(neural_model_);
+            write_line(std::string("info string neural model ") + (ok ? "loaded via " + searcher_->neural_backend() : "not loaded"));
+            return;
+        } else {
             write_line("info string unknown option: " + join(name_parts));
             return;
         }
@@ -363,6 +381,32 @@ private:
             for (const Move move : result.principal_variation) line << ' ' << move.uci();
         }
         write_line(line.str());
+        {
+            const double neural_ms = static_cast<double>(result.stats.neural_inference_us) / 1000.0;
+            const double search_ms = static_cast<double>(std::max<std::int64_t>(1, result.stats.elapsed.count()));
+            const double neural_share = 100.0 * neural_ms / search_ms;
+            std::ostringstream profile;
+            profile << "info string nc_profile"
+                    << " depth=" << result.stats.depth
+                    << " seldepth=" << result.stats.selective_depth
+                    << " nodes=" << result.stats.nodes
+                    << " nps=" << result.stats.nps
+                    << " elapsed_ms=" << result.stats.elapsed.count()
+                    << " neural_calls=" << result.stats.neural_evaluations
+                    << " neural_us=" << result.stats.neural_inference_us
+                    << " neural_ms=" << neural_ms
+                    << " neural_share_pct=" << neural_share
+                    << " root_classical_rank=" << result.stats.root_classical_best_rank
+                    << " root_policy_rank=" << result.stats.root_policy_best_rank
+                    << " root_rank_gain=" << result.stats.root_policy_rank_gain;
+            if (result.stats.neural_evaluations > 0) {
+                profile << " avg_neural_us="
+                        << (result.stats.neural_inference_us / result.stats.neural_evaluations);
+            } else {
+                profile << " avg_neural_us=0";
+            }
+            write_line(profile.str());
+        }
     }
 
     void stop_search(bool request_stop) {

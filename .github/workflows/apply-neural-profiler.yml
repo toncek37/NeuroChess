@@ -1,0 +1,56 @@
+name: Apply neural performance profiler
+
+on:
+  push:
+    branches: [prompt-15-onnx-inference]
+    paths: ['.github/workflows/apply-neural-profiler.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Patch profiler instrumentation
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace(path, old, new):
+              p = Path(path)
+              s = p.read_text(encoding='utf-8')
+              if old not in s:
+                  raise SystemExit(f'pattern not found in {path}: {old[:80]!r}')
+              p.write_text(s.replace(old, new, 1), encoding='utf-8')
+
+          replace('include/neurochess/search/searcher.h',
+              '    std::uint64_t neural_evaluations = 0;\n    std::chrono::milliseconds elapsed{0};',
+              '    std::uint64_t neural_evaluations = 0;\n    std::uint64_t neural_inference_us = 0;\n    std::chrono::milliseconds elapsed{0};')
+
+          replace('src/search/searcher.cpp',
+              '        ++stats_.neural_evaluations;\n        const int neural_cp = nn::wdl_to_centipawns(neural_->evaluate(board));',
+              '        ++stats_.neural_evaluations;\n        const auto neural_started = std::chrono::steady_clock::now();\n        const auto neural_output = neural_->evaluate(board);\n        stats_.neural_inference_us += static_cast<std::uint64_t>(\n            std::chrono::duration_cast<std::chrono::microseconds>(\n                std::chrono::steady_clock::now() - neural_started).count());\n        const int neural_cp = nn::wdl_to_centipawns(neural_output);')
+
+          replace('src/search/searcher.cpp',
+              '            neural_output = neural_->evaluate(board);\n            ++stats_.neural_evaluations;\n            have_policy = true;',
+              '            const auto neural_started = std::chrono::steady_clock::now();\n            neural_output = neural_->evaluate(board);\n            stats_.neural_inference_us += static_cast<std::uint64_t>(\n                std::chrono::duration_cast<std::chrono::microseconds>(\n                    std::chrono::steady_clock::now() - neural_started).count());\n            ++stats_.neural_evaluations;\n            have_policy = true;')
+
+          replace('src/uci/uci_loop.cpp',
+              '        if (result.stats.neural_evaluations > 0) {\n            write_line("info string neural_evals " + std::to_string(result.stats.neural_evaluations));\n        }',
+              '        {\n            const double neural_ms = static_cast<double>(result.stats.neural_inference_us) / 1000.0;\n            const double search_ms = static_cast<double>(std::max<std::int64_t>(1, result.stats.elapsed.count()));\n            const double neural_share = 100.0 * neural_ms / search_ms;\n            std::ostringstream profile;\n            profile << "info string nc_profile"\n                    << " depth=" << result.stats.depth\n                    << " seldepth=" << result.stats.selective_depth\n                    << " nodes=" << result.stats.nodes\n                    << " nps=" << result.stats.nps\n                    << " elapsed_ms=" << result.stats.elapsed.count()\n                    << " neural_calls=" << result.stats.neural_evaluations\n                    << " neural_us=" << result.stats.neural_inference_us\n                    << " neural_ms=" << neural_ms\n                    << " neural_share_pct=" << neural_share;\n            if (result.stats.neural_evaluations > 0) {\n                profile << " avg_neural_us="\n                        << (result.stats.neural_inference_us / result.stats.neural_evaluations);\n            } else {\n                profile << " avg_neural_us=0";\n            }\n            write_line(profile.str());\n        }')
+
+          # Keep the standard UCI info line untouched; nc_profile is deliberately
+          # an info string so existing GUIs and match runners continue to work.
+
+      - name: Commit profiler
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add include/neurochess/search/searcher.h src/search/searcher.cpp src/uci/uci_loop.cpp
+          git commit -m "Instrument neural inference performance" || exit 0
+          git push

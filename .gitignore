@@ -1,5 +1,6 @@
 # C/C++ build output
 /build/
+/build-*/
 /out/
 CMakeFiles/
 CMakeCache.txt
@@ -10,6 +11,10 @@ Makefile
 *.o
 *.exe
 *.pdb
+*.lib
+*.dll
+*.exp
+*.ilk
 
 # Python
 __pycache__/
@@ -18,15 +23,26 @@ __pycache__/
 venv/
 .pytest_cache/
 
-# Models / datasets
-models/*.pt
-models/*.pth
-models/*.onnx
-models/*.engine
+# Generated models / datasets
+/models/
+/datasets/
 *.pgn
 *.bin
 *.sqlite
 *.db
+
+# Generated benchmark / diagnostic output
+/elo-ladder-results/
+/value-debug-results/
+
+# Downloaded/local runtimes and caches
+/third_party/
+/.cache/
+
+# Local GUI preferences
+.neurochess_benchmark_gui.json
+.neurochess_value_debugger.json
+.neurochess_dataset_gui.json
 
 # IDE / OS
 .vscode/

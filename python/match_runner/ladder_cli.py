@@ -39,6 +39,7 @@ def parser() -> argparse.ArgumentParser:
     p.add_argument("--stockfish-option", action="append", default=[], metavar="NAME=VALUE")
     p.add_argument("--levels", type=_levels, default=DEFAULT_STOCKFISH_LEVELS)
     p.add_argument("--probe-games", type=int, default=8)
+    p.add_argument("--start-elo", type=int, default=1800)
     p.add_argument("--refine-games", type=int, default=24)
     p.add_argument("--concurrency", type=int, default=1)
     p.add_argument("--movetime-ms", type=int, default=100)
@@ -68,6 +69,7 @@ def main(argv: list[str] | None = None) -> int:
         stockfish=EngineSpec.from_command(args.stockfish_name, args.stockfish, options=_options(args.stockfish_option)),
         levels=args.levels,
         probe_games=args.probe_games,
+        start_elo=args.start_elo,
         refine_games=args.refine_games,
         concurrency=args.concurrency,
         time_control=tc,
@@ -93,10 +95,14 @@ def main(argv: list[str] | None = None) -> int:
             f"SF {point.stockfish_elo:4d}: {point.wins}-{point.draws}-{point.losses} "
             f"({point.score_percent:5.1f}%, {point.games} games)", flush=True
         )
-    print(
-        f"Estimated Stockfish-equivalent Elo: {result.estimated_elo:.0f} "
-        f"({pct:.0f}% CI {result.confidence_lower:.0f}..{result.confidence_upper:.0f})", flush=True
-    )
+    if result.range_status == "in_range":
+        print(
+            f"Estimated Stockfish-equivalent Elo: {result.estimated_elo:.0f} "
+            f"({pct:.0f}% CI {result.confidence_lower:.0f}..{result.confidence_upper:.0f})", flush=True
+        )
+    else:
+        relation = "<" if result.range_status == "below_range" else ">"
+        print(f"Estimated Stockfish-equivalent Elo: {relation}{result.range_bound} (outside calibrated range)", flush=True)
     print(f"Games: {result.total_games}", flush=True)
     print(f"JSON:  {result.report_json}", flush=True)
     return 0

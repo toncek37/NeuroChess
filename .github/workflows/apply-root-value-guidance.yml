@@ -1,0 +1,120 @@
+name: Apply root neural value guidance
+
+on:
+  push:
+    branches:
+      - prompt-15-onnx-inference
+    paths:
+      - .github/workflows/apply-root-value-guidance.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: prompt-15-onnx-inference
+      - name: Patch searcher
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          p = Path('src/search/searcher.cpp')
+          s = p.read_text()
+
+          old = '''int Searcher::static_evaluate(core::Board& board) {
+              const int classical = evaluator_.evaluate(board);
+              if (!config_.neural_value || !neural_ready()) return classical;
+              try {
+                  ++stats_.neural_evaluations;
+                  const auto neural_started = std::chrono::steady_clock::now();
+                  const auto neural_output = neural_->evaluate(board);
+                  stats_.neural_inference_us += static_cast<std::uint64_t>(
+                      std::chrono::duration_cast<std::chrono::microseconds>(
+                          std::chrono::steady_clock::now() - neural_started).count());
+                  const int neural_cp = nn::wdl_to_centipawns(neural_output);
+                  const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+                  return (classical * (100 - blend) + neural_cp * blend) / 100;
+              } catch (...) {
+                  return classical;
+              }
+          }
+          '''
+          # Match indentation-independent block by slicing between function markers.
+          start = s.index('int Searcher::static_evaluate(core::Board& board) {')
+          end = s.index('\nvoid Searcher::order_moves', start)
+          replacement = '''int Searcher::static_evaluate(core::Board& board) {
+              // Neural value is deliberately not used at every leaf. ONNX leaf
+              // evaluation consumed about 98% of a 100 ms move budget in profiling.
+              // Value inference is now reserved for selective root guidance.
+              return evaluator_.evaluate(board);
+          }
+          '''
+          s = s[:start] + replacement + s[end:]
+
+          marker = '''    core::Move tt_move{};
+              if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
+              order_moves(board, moves, tt_move, 0);
+
+          '''
+          # Build marker using exact source indentation.
+          marker = "    core::Move tt_move{};\n    if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;\n    order_moves(board, moves, tt_move, 0);\n\n"
+          if marker not in s:
+              raise SystemExit('search_root insertion point not found')
+          guidance = '''    // Selective neural root guidance: at most 12 ONNX calls, once per move.
+              // Only depth 1 pays this cost; deeper iterative-deepening passes inherit
+              // the improved first move through the root transposition-table entry.
+              if (depth == 1 && config_.neural_value && neural_ready()
+                  && config_.neural_value_blend_percent > 0) {
+                  constexpr std::size_t max_neural_root_candidates = 12;
+                  const std::size_t candidate_count = std::min(max_neural_root_candidates, moves.size());
+                  const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+                  std::vector<std::pair<core::Move, int>> guided;
+                  guided.reserve(candidate_count);
+
+                  for (std::size_t i = 0; i < candidate_count; ++i) {
+                      if (should_stop()) break;
+                      const core::Move move = moves[i];
+                      const core::UndoState undo = board.make_move(move);
+                      const int classical_root_cp = -evaluator_.evaluate(board);
+                      int ordering_cp = classical_root_cp;
+                      try {
+                          const auto neural_started = std::chrono::steady_clock::now();
+                          const auto neural_output = neural_->evaluate(board);
+                          stats_.neural_inference_us += static_cast<std::uint64_t>(
+                              std::chrono::duration_cast<std::chrono::microseconds>(
+                                  std::chrono::steady_clock::now() - neural_started).count());
+                          ++stats_.neural_evaluations;
+                          const int neural_root_cp = -nn::wdl_to_centipawns(neural_output);
+                          ordering_cp = (classical_root_cp * (100 - blend) + neural_root_cp * blend) / 100;
+                      } catch (...) {
+                          // Keep classical guidance if inference fails.
+                      }
+                      board.unmake_move(move, undo);
+                      guided.emplace_back(move, ordering_cp);
+                  }
+
+                  std::stable_sort(guided.begin(), guided.end(), [](const auto& a, const auto& b) {
+                      return a.second > b.second;
+                  });
+                  for (std::size_t i = 0; i < guided.size(); ++i) moves[i] = guided[i].first;
+              }
+
+          '''
+          # Normalize the intentionally extra Python indentation in the C++ snippet.
+          guidance = '\n'.join(line[4:] if line.startswith('    ') else line for line in guidance.splitlines()) + '\n'
+          s = s.replace(marker, marker + guidance, 1)
+          p.write_text(s)
+          PY
+      - name: Commit root guidance
+        shell: bash
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/search/searcher.cpp
+          git commit -m 'Use neural value only for selective root guidance'
+          git push
