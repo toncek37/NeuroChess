@@ -62,21 +62,10 @@ std::string Searcher::neural_backend() const {
 }
 
 int Searcher::static_evaluate(core::Board& board) {
-    const int classical = evaluator_.evaluate(board);
-    if (!config_.neural_value || !neural_ready()) return classical;
-    try {
-        ++stats_.neural_evaluations;
-        const auto neural_started = std::chrono::steady_clock::now();
-        const auto neural_output = neural_->evaluate(board);
-        stats_.neural_inference_us += static_cast<std::uint64_t>(
-            std::chrono::duration_cast<std::chrono::microseconds>(
-                std::chrono::steady_clock::now() - neural_started).count());
-        const int neural_cp = nn::wdl_to_centipawns(neural_output);
-        const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
-        return (classical * (100 - blend) + neural_cp * blend) / 100;
-    } catch (...) {
-        return classical;
-    }
+    // Neural value is deliberately not used at every leaf. ONNX leaf
+    // evaluation consumed about 98% of a 100 ms move budget in profiling.
+    // Value inference is now reserved for selective root guidance.
+    return evaluator_.evaluate(board);
 }
 
 void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
@@ -204,6 +193,45 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
     core::Move tt_move{};
     if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
     order_moves(board, moves, tt_move, 0);
+
+// Selective neural root guidance: at most 12 ONNX calls, once per move.
+// Only depth 1 pays this cost; deeper iterative-deepening passes inherit
+// the improved first move through the root transposition-table entry.
+if (depth == 1 && config_.neural_value && neural_ready()
+    && config_.neural_value_blend_percent > 0) {
+    constexpr std::size_t max_neural_root_candidates = 12;
+    const std::size_t candidate_count = std::min(max_neural_root_candidates, moves.size());
+    const int blend = std::clamp(config_.neural_value_blend_percent, 0, 100);
+    std::vector<std::pair<core::Move, int>> guided;
+    guided.reserve(candidate_count);
+
+    for (std::size_t i = 0; i < candidate_count; ++i) {
+        if (should_stop()) break;
+        const core::Move move = moves[i];
+        const core::UndoState undo = board.make_move(move);
+        const int classical_root_cp = -evaluator_.evaluate(board);
+        int ordering_cp = classical_root_cp;
+        try {
+            const auto neural_started = std::chrono::steady_clock::now();
+            const auto neural_output = neural_->evaluate(board);
+            stats_.neural_inference_us += static_cast<std::uint64_t>(
+                std::chrono::duration_cast<std::chrono::microseconds>(
+                    std::chrono::steady_clock::now() - neural_started).count());
+            ++stats_.neural_evaluations;
+            const int neural_root_cp = -nn::wdl_to_centipawns(neural_output);
+            ordering_cp = (classical_root_cp * (100 - blend) + neural_root_cp * blend) / 100;
+        } catch (...) {
+            // Keep classical guidance if inference fails.
+        }
+        board.unmake_move(move, undo);
+        guided.emplace_back(move, ordering_cp);
+    }
+
+    std::stable_sort(guided.begin(), guided.end(), [](const auto& a, const auto& b) {
+        return a.second > b.second;
+    });
+    for (std::size_t i = 0; i < guided.size(); ++i) moves[i] = guided[i].first;
+}
 
     const int alpha_original = alpha;
     int best_score = -Infinity;
