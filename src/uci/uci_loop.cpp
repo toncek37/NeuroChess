@@ -165,6 +165,7 @@ private:
         write_line("option name Razoring type check default true");
         write_line("option name Neural Model type string default <empty>");
         write_line("option name Neural Policy type check default false");
+        write_line("option name Neural Policy Max Ply type spin default 2 min 0 max 16");
         write_line("option name Neural Value type check default false");
         write_line("option name Neural Value Blend type spin default 50 min 0 max 100");
         write_line("uciok");
@@ -274,7 +275,9 @@ private:
         else if (name == "futility pruning") update_bool(config_.futility_pruning);
         else if (name == "razoring") update_bool(config_.razoring);
         else if (name == "neural policy") update_bool(config_.neural_policy);
-        else if (name == "neural value") update_bool(config_.neural_value);
+        else if (name == "neural policy max ply") {
+            if (const auto parsed = parse_int(value)) config_.neural_policy_max_ply = std::clamp(*parsed, 0, 16);
+        } else if (name == "neural value") update_bool(config_.neural_value);
         else if (name == "neural value blend") {
             if (const auto parsed = parse_int(value)) config_.neural_value_blend_percent = std::clamp(*parsed, 0, 100);
         } else if (name == "neural model") {
@@ -372,13 +375,15 @@ private:
         }
         line << " nodes " << result.stats.nodes
              << " nps " << result.stats.nps
-             << " string neural_evals=" << result.stats.neural_evaluations
              << " time " << result.stats.elapsed.count();
         if (!result.principal_variation.empty()) {
             line << " pv";
             for (const Move move : result.principal_variation) line << ' ' << move.uci();
         }
         write_line(line.str());
+        if (result.stats.neural_evaluations > 0) {
+            write_line("info string neural_evals " + std::to_string(result.stats.neural_evaluations));
+        }
     }
 
     void stop_search(bool request_stop) {

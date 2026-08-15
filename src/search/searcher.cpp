@@ -67,7 +67,7 @@ int Searcher::static_evaluate(core::Board& board) {
 void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
     nn::NeuralOutput neural_output;
     bool have_policy = false;
-    if (config_.neural_policy && neural_ready()) {
+    if (config_.neural_policy && ply <= config_.neural_policy_max_ply && neural_ready()) {
         try {
             neural_output = neural_->evaluate(board);
             ++stats_.neural_evaluations;
@@ -239,7 +239,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
     if (depth <= 0) return quiescence(board, ply, alpha, beta);
 
     const bool in_check = board.in_check(board.side_to_move());
-    const int static_eval = in_check ? -Infinity : static_evaluate(board);
+    const int static_eval = in_check ? -Infinity : evaluator_.evaluate(board);
 
     if (config_.razoring && !in_check && depth <= 2
         && static_eval + config_.razor_margin_cp * depth <= alpha) {
