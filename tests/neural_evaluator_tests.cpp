@@ -30,6 +30,21 @@ int main() {
     const core::Move promo{48, 56, core::MoveFlag::Promotion, core::PieceType::Queen};
     assert(nn::move_to_policy_index(promo) == 4096 + 48 * 64 + 56);
 
+    // Promotion buckets must exactly match Python: None,Q,R,B,N = 0..4.
+    const core::Move promo_r{48, 56, core::MoveFlag::Promotion, core::PieceType::Rook};
+    const core::Move promo_b{48, 56, core::MoveFlag::Promotion, core::PieceType::Bishop};
+    const core::Move promo_n{48, 56, core::MoveFlag::Promotion, core::PieceType::Knight};
+    assert(nn::move_to_policy_index(promo_r) == 2 * 4096 + 48 * 64 + 56);
+    assert(nn::move_to_policy_index(promo_b) == 3 * 4096 + 48 * 64 + 56);
+    assert(nn::move_to_policy_index(promo_n) == 4 * 4096 + 48 * 64 + 56);
+
+    // Castling and en-passant use the ordinary non-promotion bucket; flags must
+    // not alter the neural policy index.
+    const core::Move castle{4, 6, core::MoveFlag::KingCastle};
+    const core::Move ep{36, 43, core::MoveFlag::EnPassant};
+    assert(nn::move_to_policy_index(castle) == 4 * 64 + 6);
+    assert(nn::move_to_policy_index(ep) == 36 * 64 + 43);
+
     nn::NeuralOutput out;
     out.policy_logits.resize(5 * 64 * 64, -1.0f);
     out.policy_logits[static_cast<std::size_t>(nn::move_to_policy_index(e2e4))] = 3.5f;

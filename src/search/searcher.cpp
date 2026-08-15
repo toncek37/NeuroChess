@@ -116,6 +116,12 @@ SearchResult Searcher::search(core::Board& board, SearchLimits limits) {
 
     SearchResult best{};
     const auto initial_legal_moves = core::MoveGenerator::legal(board);
+    // Keep a legal fallback from the moment search starts. Neural inference can
+    // consume the entire small time budget before depth 1 completes; returning
+    // a default Move{} in that case is an illegal UCI 0000 move.
+    if (!initial_legal_moves.empty()) {
+        best.best_move = initial_legal_moves.front();
+    }
     if (initial_legal_moves.empty()) {
         best.score = board.in_check(board.side_to_move()) ? -MateScore : 0;
         best.completed = true;
