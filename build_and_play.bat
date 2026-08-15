@@ -1,5 +1,5 @@
 @echo off
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo ========================================
@@ -25,14 +25,19 @@ rem A normal Command Prompt does not expose MSVC automatically.
 where cl >nul 2>nul
 if errorlevel 1 (
     set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
-    if exist "%VSWHERE%" (
-        for /f "tokens=*" %%i in ('"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSINSTALL=%%i"
+    if exist "!VSWHERE!" (
+        for /f "tokens=*" %%i in ('"!VSWHERE!" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set "VSINSTALL=%%i"
     )
 
-    if defined VSINSTALL if exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" (
-        echo Found Visual Studio at: %VSINSTALL%
-        echo Activating Visual Studio C++ build environment...
-        call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+    if defined VSINSTALL (
+        echo Found Visual Studio at: !VSINSTALL!
+        if exist "!VSINSTALL!\VC\Auxiliary\Build\vcvars64.bat" (
+            echo Activating MSVC x64 environment via vcvars64.bat...
+            call "!VSINSTALL!\VC\Auxiliary\Build\vcvars64.bat"
+        ) else if exist "!VSINSTALL!\Common7\Tools\VsDevCmd.bat" (
+            echo Activating Visual Studio C++ build environment via VsDevCmd.bat...
+            call "!VSINSTALL!\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64
+        )
     )
 )
 
@@ -40,6 +45,12 @@ where cl >nul 2>nul
 if errorlevel 1 (
     echo.
     echo ERROR: Visual Studio with C++ tools was detected, but cl.exe is still unavailable.
+    echo.
+    if defined VSINSTALL echo Detected installation: !VSINSTALL!
+    echo Expected one of these setup scripts:
+    if defined VSINSTALL echo   !VSINSTALL!\VC\Auxiliary\Build\vcvars64.bat
+    if defined VSINSTALL echo   !VSINSTALL!\Common7\Tools\VsDevCmd.bat
+    echo.
     echo Open Visual Studio Installer - Modify and verify:
     echo   Desktop development with C++
     echo   MSVC v143 x64/x86 build tools
@@ -56,6 +67,7 @@ if errorlevel 1 (
 
 echo.
 echo Compiler detected:
+where cl
 cl 2>&1 | findstr /i /c:"Compiler" /c:"Microsoft"
 echo.
 
@@ -92,8 +104,8 @@ if not defined ENGINE (
 )
 
 echo.
-echo [3/3] Starting GUI with %ENGINE%...
-python play_gui.py --engine "%ENGINE%"
+echo [3/3] Starting GUI with !ENGINE!...
+python play_gui.py --engine "!ENGINE!"
 if errorlevel 1 (
     echo.
     echo ERROR: GUI exited with an error.
