@@ -95,7 +95,6 @@ class LadderResult:
 
 
 def _normal_quantile(confidence: float) -> float:
-    # Acklam inverse-normal approximation. No scipy dependency needed.
     p = 0.5 + confidence / 2.0
     if not 0.0 < p < 1.0:
         raise ValueError("confidence produces invalid quantile")
@@ -132,10 +131,7 @@ def estimate_elo(points: Iterable[LadderPoint], confidence: float = 0.95) -> Elo
     games = sum(p.games for p in used)
     if games == 0:
         raise ValueError("Cannot estimate Elo without games")
-
     actual_score = sum(p.score for p in used)
-
-    # Solve sum(expected scores) == observed total score. The function is monotonic.
     lo = min(p.stockfish_elo for p in used) - 1600.0
     hi = max(p.stockfish_elo for p in used) + 1600.0
     for _ in range(100):
@@ -146,10 +142,6 @@ def estimate_elo(points: Iterable[LadderPoint], confidence: float = 0.95) -> Elo
         else:
             hi = mid
     elo = (lo + hi) * 0.5
-
-    # Fisher-information approximation for the logistic Elo model. Draws contribute
-    # half a point to the observed score; this gives a useful match-strength CI but
-    # intentionally does not claim to be a FIDE rating confidence interval.
     k = math.log(10.0) / 400.0
     information = 0.0
     for p in used:
@@ -157,18 +149,11 @@ def estimate_elo(points: Iterable[LadderPoint], confidence: float = 0.95) -> Elo
         information += p.games * (k * k) * expected * (1.0 - expected)
     standard_error = 1.0 / math.sqrt(max(information, 1e-18))
     z = _normal_quantile(confidence)
-    return EloEstimate(
-        elo=elo,
-        lower=elo - z * standard_error,
-        upper=elo + z * standard_error,
-        confidence=confidence,
-        standard_error=standard_error,
-        games=games,
-    )
+    return EloEstimate(elo, elo - z * standard_error, elo + z * standard_error,
+                       confidence, standard_error, games)
 
 
 def validate_stockfish_strength_options(stockfish: EngineSpec) -> None:
-    """Fail early when the reference engine does not advertise the needed UCI options."""
     with UciEngine(stockfish) as engine:
         normalized = {name.lower() for name in engine.option_names}
         missing = [name for name in ("UCI_LimitStrength", "UCI_Elo") if name.lower() not in normalized]
@@ -189,10 +174,14 @@ def run_elo_ladder(
     config: LadderConfig,
     *,
     match_runner: Callable[[MatchConfig], MatchSummary] = run_match,
+    progress: Callable[[str], None] | None = None,
 ) -> LadderResult:
     config.validate()
+    emit = progress or (lambda _message: None)
+    emit("Validating Stockfish UCI strength controls...")
     if config.validate_stockfish:
         validate_stockfish_strength_options(config.stockfish)
+    emit("Stockfish validation OK.")
 
     root = Path(config.output_dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -202,6 +191,7 @@ def run_elo_ladder(
     def sample(level: int, games: int) -> LadderPoint:
         nonlocal run_counter
         run_counter += 1
+        emit(f"Playing {games} games vs Stockfish Elo {level}...")
         per_run_dir = root / f"sf-{level}" / f"run-{run_counter:03d}"
         match = MatchConfig(
             engine_a=config.engine,
@@ -218,10 +208,13 @@ def run_elo_ladder(
         )
         summary = match_runner(match)
         points[level].add(summary)
-        return points[level]
+        point = points[level]
+        emit(
+            f"SF {level}: {point.wins}-{point.draws}-{point.losses}, "
+            f"score {point.score_percent:.1f}% ({point.games} games)."
+        )
+        return point
 
-    # Coarse binary search over configured rungs. Each comparison asks whether the
-    # engine is clearly above/below the rung or already within the 50% target band.
     low_idx = 0
     high_idx = len(config.levels) - 1
     visited: set[int] = set()
@@ -237,6 +230,7 @@ def run_elo_ladder(
         p = point.score / point.games
         if abs(p - 0.5) <= config.score_band:
             target_idx = idx
+            emit(f"Target band reached near Stockfish Elo {level}.")
             break
         if p > 0.5:
             low_idx = idx + 1
@@ -244,13 +238,11 @@ def run_elo_ladder(
             high_idx = idx - 1
 
     if target_idx is None:
-        # Bracket is between high_idx (engine scored >50%) and low_idx (<50%).
         target_idx = min(max(low_idx, 0), len(config.levels) - 1)
 
-    # Refine the closest rung plus its immediate neighbours. This concentrates games
-    # where they contribute most to the rating estimate without wasting a full match
-    # at every ladder level.
-    refine_indices = sorted({i for i in (target_idx - 1, target_idx, target_idx + 1) if 0 <= i < len(config.levels)})
+    refine_indices = sorted({i for i in (target_idx - 1, target_idx, target_idx + 1)
+                             if 0 <= i < len(config.levels)})
+    emit("Refining around the estimated strength region...")
     for idx in refine_indices:
         level = config.levels[idx]
         already = points[level].games
@@ -259,7 +251,6 @@ def run_elo_ladder(
 
     used_points = [points[level] for level in config.levels if points[level].games]
     estimate = estimate_elo(used_points, config.confidence)
-
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = root / f"elo-ladder-{stamp}-{config.seed}.json"
     payload = {
@@ -276,6 +267,10 @@ def run_elo_ladder(
         "points": [asdict(point) for point in used_points],
     }
     report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    emit(
+        f"Estimated Elo {estimate.elo:.0f}; {config.confidence*100:.0f}% CI "
+        f"{estimate.lower:.0f}..{estimate.upper:.0f}; {estimate.games} games."
+    )
 
     return LadderResult(
         estimated_elo=estimate.elo,

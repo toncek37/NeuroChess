@@ -1,0 +1,35 @@
+name: Prompt 13 data tests
+
+on:
+  push:
+    branches:
+      - prompt-13-training-positions
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  python-data-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install test dependency
+        run: python -m pip install python-chess
+      - name: Run Prompt 13 tests
+        env:
+          PYTHONPATH: python
+        run: |
+          python -m unittest \
+            python.tests.test_position_generator \
+            python.tests.test_teacher_labeler \
+            python.tests.test_engine_spec_paths
+      - name: Compile benchmark GUI and ladder modules
+        run: |
+          python -m py_compile \
+            python/gui/benchmark_app.py \
+            python/match_runner/uci_engine.py \
+            python/match_runner/elo_ladder.py \
+            python/match_runner/ladder_cli.py

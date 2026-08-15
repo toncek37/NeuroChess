@@ -81,24 +81,24 @@ def main(argv: list[str] | None = None) -> int:
         validate_stockfish=not args.skip_stockfish_validation,
     )
     try:
-        result = run_elo_ladder(config)
+        result = run_elo_ladder(config, progress=lambda message: print(message, flush=True))
     except (RuntimeError, ValueError, UciError) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        print(f"error: {exc}", file=sys.stderr, flush=True)
         return 2
 
     pct = result.confidence * 100.0
-    print("\nElo ladder complete")
+    print("\nElo ladder complete", flush=True)
     for point in result.points:
         print(
             f"SF {point.stockfish_elo:4d}: {point.wins}-{point.draws}-{point.losses} "
-            f"({point.score_percent:5.1f}%, {point.games} games)"
+            f"({point.score_percent:5.1f}%, {point.games} games)", flush=True
         )
     print(
         f"Estimated Stockfish-equivalent Elo: {result.estimated_elo:.0f} "
-        f"({pct:.0f}% CI {result.confidence_lower:.0f}..{result.confidence_upper:.0f})"
+        f"({pct:.0f}% CI {result.confidence_lower:.0f}..{result.confidence_upper:.0f})", flush=True
     )
-    print(f"Games: {result.total_games}")
-    print(f"JSON:  {result.report_json}")
+    print(f"Games: {result.total_games}", flush=True)
+    print(f"JSON:  {result.report_json}", flush=True)
     return 0
 
 
