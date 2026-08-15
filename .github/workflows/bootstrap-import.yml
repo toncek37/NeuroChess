@@ -18,22 +18,14 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify parts and import source tree
+      - name: Reassemble verified source archive
         shell: bash
         run: |
           set -euo pipefail
-          echo "07ffbd96999b017c825306e2e06b877f986a705042caed020ef515f0f2718bf5  .bootstrap/part_00" | sha256sum -c -
-          echo "9ead1aa9c60ea8e87f5e52eac50e08433f930e2c32dbd04ff18cadb35742e228  .bootstrap/part_01" | sha256sum -c -
-          echo "22abfcd9cc06cff06ca2519698c42277f121c6939fd03e72cfa6bad2736741a4  .bootstrap/part_02" | sha256sum -c -
-          echo "1b7625da33fe03e8fd6f1b97ca6566386a1d745f5bd5d67c4d95bf784e8caf22  .bootstrap/part_03" | sha256sum -c -
-          echo "47affca2879271b3be83d1982793b291adb7d0bc6806b443c731c96d9051618d  .bootstrap/part_04" | sha256sum -c -
-          echo "5387dd9aaf274b90b219c2fdaec0338152912f8faa83d7036cf64e8d193c5101  .bootstrap/part_05" | sha256sum -c -
-          echo "82169660e81da3b4ac3515625e9187042f998a2617ec8b2a8b31e1d043934d79  .bootstrap/part_06" | sha256sum -c -
-          echo "c70c8139147144186185fa159f6ab1b1084fb0140e9df0b7a1d910ddd21d12c5  .bootstrap/part_07" | sha256sum -c -
-          echo "032a23eac6ac7d7ae98706645379f39bf1e56217562804432e3f4f6e14f2f1a1  .bootstrap/part_08" | sha256sum -c -
-          echo "a7c2f9ff15f86e69ef0a079d16e59a05e0d74cedb1978277dd57c54a66bf1c33  .bootstrap/part_09" | sha256sum -c -
-          echo "649eec268d2c7a85ea64d10492c1263dcaa75ae12886573efdfda83910c561d6  .bootstrap/part_10" | sha256sum -c -
-          cat .bootstrap/part_00 .bootstrap/part_01 .bootstrap/part_02 .bootstrap/part_03 .bootstrap/part_04 .bootstrap/part_05 .bootstrap/part_06 .bootstrap/part_07 .bootstrap/part_08 .bootstrap/part_09 .bootstrap/part_10 > /tmp/neurochess.b64
+          : > /tmp/neurochess.b64
+          for p in .bootstrap/part_00 .bootstrap/part_01 .bootstrap/part_02 .bootstrap/part_03 .bootstrap/part_04 .bootstrap/part_05 .bootstrap/part_06 .bootstrap/part_07 .bootstrap/part_08 .bootstrap/part_09 .bootstrap/part_10; do
+            tr -d '\r\n' < "$p" >> /tmp/neurochess.b64
+          done
           echo "68ccc3ba4bf252796a0e9f10804e8c5f771dd7d6ca1c2d4976dc0cdcecfe39bc  /tmp/neurochess.b64" | sha256sum -c -
           base64 -d /tmp/neurochess.b64 > /tmp/neurochess.tar.gz
           echo "1c099a33ff74e6eda0c28ffa4d680858eb268f11cb0e36ce31cb78f8a3f9059f  /tmp/neurochess.tar.gz" | sha256sum -c -
