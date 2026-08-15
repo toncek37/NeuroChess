@@ -28,6 +28,9 @@ models/*.engine
 *.sqlite
 *.db
 
+# Local GUI preferences
+.neurochess_benchmark_gui.json
+
 # IDE / OS
 .vscode/
 .idea/
