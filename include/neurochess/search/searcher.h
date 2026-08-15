@@ -108,6 +108,7 @@ private:
     std::vector<std::uint64_t> prior_history_;
     std::vector<std::uint64_t> search_history_;
     std::vector<core::Move> root_neural_order_;
+    int selective_policy_calls_used_ = 0;
     std::atomic_bool stop_requested_{false};
 
     std::array<std::array<core::Move, 2>, MaxPly> killers_{};
@@ -122,7 +123,8 @@ private:
     int negamax(core::Board& board, int depth, int ply, int alpha, int beta, bool allow_null = true);
     int quiescence(core::Board& board, int ply, int alpha, int beta);
     int static_evaluate(core::Board& board);
-    void order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply);
+    void order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply,
+                     bool allow_selective_value_policy = false);
 
     [[nodiscard]] bool should_stop();
     [[nodiscard]] bool is_repetition(std::uint64_t key) const noexcept;

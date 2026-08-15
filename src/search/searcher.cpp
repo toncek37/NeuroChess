@@ -69,10 +69,19 @@ int Searcher::static_evaluate(core::Board& board) {
     return evaluator_.evaluate(board);
 }
 
-void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply) {
+void Searcher::order_moves(core::Board& board, std::vector<core::Move>& moves, core::Move tt_move, int ply,
+                           bool allow_selective_value_policy) {
     nn::NeuralOutput neural_output;
     bool have_policy = false;
-    if (config_.neural_policy && ply <= config_.neural_policy_max_ply && neural_ready()) {
+    const bool regular_policy = config_.neural_policy
+        && ply <= config_.neural_policy_max_ply;
+    const bool selective_value_policy = allow_selective_value_policy
+        && config_.neural_value
+        && config_.neural_value_blend_percent > 0
+        && ply == 1
+        && selective_policy_calls_used_ < 4;
+    if ((regular_policy || selective_value_policy) && neural_ready()) {
+        if (selective_value_policy) ++selective_policy_calls_used_;
         try {
             const auto neural_started = std::chrono::steady_clock::now();
             neural_output = neural_->evaluate(board);
@@ -120,6 +129,7 @@ SearchResult Searcher::search(core::Board& board, SearchLimits limits) {
     stats_ = {};
     reset_heuristics();
     root_neural_order_.clear();
+    selective_policy_calls_used_ = 0;
     start_time_ = std::chrono::steady_clock::now();
     search_history_ = prior_history_;
     search_history_.push_back(board.zobrist_key());
@@ -194,7 +204,7 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
 
     core::Move tt_move{};
     if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
-    order_moves(board, moves, tt_move, 0);
+    order_moves(board, moves, tt_move, 0, false);
 
     // One neural inference on the current root position provides policy logits
     // for every legal move. Cache that ordering for the whole iterative-
@@ -203,6 +213,7 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
     if (config_.neural_value && neural_ready() && config_.neural_value_blend_percent > 0) {
         if (root_neural_order_.empty()) {
             try {
+                ++selective_policy_calls_used_;
                 const auto neural_started = std::chrono::steady_clock::now();
                 const auto neural_output = neural_->evaluate(board);
                 stats_.neural_inference_us += static_cast<std::uint64_t>(
@@ -331,7 +342,7 @@ int Searcher::negamax(core::Board& board, int depth, int ply, int alpha, int bet
     auto moves = core::MoveGenerator::legal(board);
     if (moves.empty()) return in_check ? (-MateScore + ply) : 0;
 
-    order_moves(board, moves, tt_move, ply);
+    order_moves(board, moves, tt_move, ply, true);
 
     int best_score = -Infinity;
     core::Move best_move{};
@@ -425,7 +436,7 @@ int Searcher::quiescence(core::Board& board, int ply, int alpha, int beta) {
         if (moves.empty()) return alpha;
     }
 
-    order_moves(board, moves, core::Move{}, ply);
+    order_moves(board, moves, core::Move{}, ply, false);
 
     for (const core::Move move : moves) {
         const core::UndoState undo = board.make_move(move);
