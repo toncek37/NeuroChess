@@ -35,6 +35,11 @@ MODULES = (
         "Validate ONNX WDL/value against teacher-labelled positions and diagnose orientation/calibration problems.",
     ),
     Module(
+        "Policy Debugger",
+        "run_policy_debugger_gui.bat",
+        "Measure neural policy top-k teacher-move ranking and compare it with the static classical root-order baseline.",
+    ),
+    Module(
         "Dataset Generator",
         "run_dataset_gui.bat",
         "Generate legal chess positions and label them with Stockfish for neural training.",
@@ -56,8 +61,8 @@ class LauncherApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("NeuroChess Launcher")
-        self.geometry("760x540")
-        self.minsize(660, 470)
+        self.geometry("760x590")
+        self.minsize(660, 510)
         self._status = tk.StringVar(value="Ready")
         self._build_ui()
 
