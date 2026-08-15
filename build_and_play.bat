@@ -21,11 +21,52 @@ if errorlevel 1 (
     goto :fail
 )
 
+rem CMake needs a real C++ toolchain. A normal Command Prompt does not
+rem automatically expose MSVC even when Visual Studio Build Tools are installed.
+where cl >nul 2>nul
+if errorlevel 1 (
+    set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
+    if exist "%VSWHERE%" (
+        for /f "usebackq tokens=*" %%i in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSINSTALL=%%i"
+    )
+
+    if defined VSINSTALL if exist "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" (
+        echo Activating Visual Studio C++ build environment...
+        call "%VSINSTALL%\Common7\Tools\VsDevCmd.bat" -arch=x64 -host_arch=x64 >nul
+    )
+)
+
+where cl >nul 2>nul
+if errorlevel 1 (
+    echo.
+    echo ERROR: No Microsoft C++ compiler was found.
+    echo.
+    echo Install "Visual Studio 2022 Build Tools" and select the workload:
+    echo   Desktop development with C++
+    echo.
+    echo Required components include MSVC x64/x86 build tools and a Windows SDK.
+    echo After installation, run this file again; no manual Developer Prompt is needed.
+    goto :fail
+)
+
+where nmake >nul 2>nul
+if errorlevel 1 (
+    echo ERROR: MSVC was found, but nmake.exe is unavailable.
+    echo Repair/install the "Desktop development with C++" workload.
+    goto :fail
+)
+
+echo Compiler detected:
+cl 2>&1 | findstr /c:"Compiler Version"
+echo.
+
 echo [1/3] Configuring CMake...
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 if errorlevel 1 (
     echo.
     echo ERROR: CMake configuration failed.
+    echo If this build directory was created with a different generator, delete the
+    echo "build" folder once and run this launcher again.
     goto :fail
 )
 
