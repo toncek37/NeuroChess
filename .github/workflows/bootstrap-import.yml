@@ -18,10 +18,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Extract source tree
+      - name: Reassemble and verify source archive
         shell: bash
         run: |
-          base64 -d .bootstrap/neurochess_v0126.tar.gz.b64 > /tmp/neurochess.tar.gz
+          cat .bootstrap/chunk_* > /tmp/neurochess.b64
+          echo "68ccc3ba4bf252796a0e9f10804e8c5f771dd7d6ca1c2d4976dc0cdcecfe39bc  /tmp/neurochess.b64" | sha256sum -c -
+          base64 -d /tmp/neurochess.b64 > /tmp/neurochess.tar.gz
+          echo "1c099a33ff74e6eda0c28ffa4d680858eb268f11cb0e36ce31cb78f8a3f9059f  /tmp/neurochess.tar.gz" | sha256sum -c -
           tar -xzf /tmp/neurochess.tar.gz -C .
           rm -rf .bootstrap
           rm -f .github/workflows/bootstrap-import.yml
