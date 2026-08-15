@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <bit>
 #include <cmath>
+#include <limits>
 
 namespace neurochess::search {
 namespace {
@@ -195,61 +196,49 @@ int Searcher::search_root(core::Board& board, int depth, int alpha, int beta, co
     if (const auto entry = tt_.probe(board.zobrist_key())) tt_move = entry->best_move;
     order_moves(board, moves, tt_move, 0);
 
-    // Neural root guidance is computed once per search, then reused at every
-    // iterative-deepening depth. The top candidates are ranked purely by NN
-    // value; the actual scores and all tree evaluation remain classical.
+    // One neural inference on the current root position provides policy logits
+    // for every legal move. Cache that ordering for the whole iterative-
+    // deepening search. TT remains the highest-priority root move; policy then
+    // orders the remaining moves, while actual tree scores stay classical.
     if (config_.neural_value && neural_ready() && config_.neural_value_blend_percent > 0) {
-        constexpr std::size_t max_neural_root_candidates = 12;
-
         if (root_neural_order_.empty()) {
-            const std::size_t candidate_count = std::min(max_neural_root_candidates, moves.size());
-            std::vector<std::pair<core::Move, int>> guided;
-            guided.reserve(candidate_count);
+            try {
+                const auto neural_started = std::chrono::steady_clock::now();
+                const auto neural_output = neural_->evaluate(board);
+                stats_.neural_inference_us += static_cast<std::uint64_t>(
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        std::chrono::steady_clock::now() - neural_started).count());
+                ++stats_.neural_evaluations;
 
-            for (std::size_t i = 0; i < candidate_count; ++i) {
-                if (should_stop()) break;
-                const core::Move move = moves[i];
-                const core::UndoState undo = board.make_move(move);
-                int neural_root_cp = -Infinity;
-                try {
-                    const auto neural_started = std::chrono::steady_clock::now();
-                    const auto neural_output = neural_->evaluate(board);
-                    stats_.neural_inference_us += static_cast<std::uint64_t>(
-                        std::chrono::duration_cast<std::chrono::microseconds>(
-                            std::chrono::steady_clock::now() - neural_started).count());
-                    ++stats_.neural_evaluations;
-                    neural_root_cp = -nn::wdl_to_centipawns(neural_output);
-                } catch (...) {
-                    // Failed candidates stay at the back in their original order.
+                std::vector<std::pair<core::Move, float>> policy_ranked;
+                policy_ranked.reserve(moves.size());
+                for (const core::Move move : moves) {
+                    float logit = nn::policy_logit_for_move(neural_output, move);
+                    if (!std::isfinite(logit)) logit = -std::numeric_limits<float>::infinity();
+                    policy_ranked.emplace_back(move, logit);
                 }
-                board.unmake_move(move, undo);
-                guided.emplace_back(move, neural_root_cp);
-            }
-
-            std::stable_sort(guided.begin(), guided.end(), [](const auto& a, const auto& b) {
-                return a.second > b.second;
-            });
-            root_neural_order_.reserve(guided.size());
-            for (const auto& [move, score] : guided) {
-                (void)score;
-                root_neural_order_.push_back(move);
+                std::stable_sort(policy_ranked.begin(), policy_ranked.end(), [](const auto& a, const auto& b) {
+                    return a.second > b.second;
+                });
+                root_neural_order_.reserve(policy_ranked.size());
+                for (const auto& item : policy_ranked) root_neural_order_.push_back(item.first);
+            } catch (...) {
+                // If inference fails, normal TT/history ordering remains intact.
             }
         }
 
-        // Reapply the same neural ordering after normal TT/history ordering on
-        // every depth, without any additional inference calls.
-        std::vector<core::Move> reordered;
-        reordered.reserve(moves.size());
-        for (const core::Move preferred : root_neural_order_) {
-            const auto it = std::find(moves.begin(), moves.end(), preferred);
-            if (it != moves.end()) reordered.push_back(*it);
-        }
-        for (const core::Move move : moves) {
-            if (std::find(reordered.begin(), reordered.end(), move) == reordered.end()) {
-                reordered.push_back(move);
+        if (!root_neural_order_.empty()) {
+            std::vector<core::Move> reordered;
+            reordered.reserve(moves.size());
+            if (tt_move.raw() != 0 && contains_move(moves, tt_move)) reordered.push_back(tt_move);
+            for (const core::Move preferred : root_neural_order_) {
+                if (preferred != tt_move && contains_move(moves, preferred)) reordered.push_back(preferred);
             }
+            for (const core::Move move : moves) {
+                if (!contains_move(reordered, move)) reordered.push_back(move);
+            }
+            moves.swap(reordered);
         }
-        moves.swap(reordered);
     }
 
     const int alpha_original = alpha;
