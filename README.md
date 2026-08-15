@@ -6,11 +6,11 @@ The intended final engine combines a fast C++ chess core, classical alpha-beta s
 
 ## Current status
 
-**Prompt 13 / training-position dataset generation.**
+**Prompt 13 / training-data generation and teacher labelling.**
 
 The C++ engine already provides legal chess state, incremental hashing, classical evaluation/search, UCI, match running, adaptive Stockfish Elo measurement and head-to-head regression testing. A local Tkinter GUI is also available.
 
-Prompt 13 adds the first neural-data infrastructure under `python/data/`: deterministic position sampling from public PGN, reproducible exploratory legal self-play, controlled legal perturbations, provenance metadata, FEN-based deduplication and JSONL output. The dataset is intentionally **unlabelled** at this stage; teacher policy/WDL labelling belongs to the next data step rather than being guessed here.
+Prompt 13 adds the first neural-data infrastructure under `python/data/`: deterministic position sampling from public PGN, reproducible exploratory legal self-play, controlled legal perturbations, provenance metadata, FEN-based deduplication and JSONL output. Generated positions can then be labelled by a strong UCI teacher with MultiPV policy candidates plus value/WDL targets. Every labelled sample records teacher identity, executable SHA-256 and exact search budget for reproducibility.
 
 ## Architecture
 
@@ -52,7 +52,17 @@ PYTHONPATH=python python -m data.generate_positions \
   --perturbations-per-position 1
 ```
 
-See `python/data/README.md` for provenance guidance. Public PGN is consumed locally rather than silently downloaded or redistributed by the project.
+Teacher labelling example:
+
+```bash
+PYTHONPATH=python python -m data.label_positions \
+  --input datasets/positions.jsonl \
+  --output datasets/labelled.jsonl \
+  --engine /path/to/stockfish \
+  --nodes 50000 --multipv 8
+```
+
+See `python/data/README.md` for schema and provenance guidance. Public PGN is consumed locally rather than silently downloaded or redistributed by the project.
 
 ## Design rule
 
@@ -60,4 +70,4 @@ Every major optimization or neural component should be independently switchable 
 
 ## Next implementation step
 
-Teacher labelling: evaluate generated positions with a strong reference engine and produce policy candidates plus WDL/value targets with reproducible engine/version/search-budget metadata.
+Prompt 14: convert labelled JSONL positions into tensor features/targets and implement the first PyTorch policy + WDL/value network with a minimal training loop and checkpoint format.
