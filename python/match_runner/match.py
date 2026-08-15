@@ -82,6 +82,7 @@ class GameResult:
     opening: str
     moves: list[str]
     move_times_ms: list[float]
+    neuro_profiles: list[dict[str, float]]
     pgn: str
     engine_a_score: float
 
@@ -183,6 +184,7 @@ def _play_game(config: MatchConfig, game_index: int, opening: Opening) -> GameRe
 
     moves_uci: list[str] = []
     move_times_ms: list[float] = []
+    neuro_profiles: list[dict[str, float]] = []
     clocks = {chess.WHITE: float(config.time_control.base_ms), chess.BLACK: float(config.time_control.base_ms)}
     termination = ""
     result = "*"
@@ -212,6 +214,21 @@ def _play_game(config: MatchConfig, game_index: int, opening: Opening) -> GameRe
 
             try:
                 bestmove, _info, elapsed = engine.bestmove(go, timeout)
+                for info_line in _info:
+                    prefix = "info string nc_profile "
+                    if not info_line.startswith(prefix):
+                        continue
+                    values: dict[str, float] = {}
+                    for item in info_line[len(prefix):].split():
+                        if "=" not in item:
+                            continue
+                        key, raw = item.split("=", 1)
+                        try:
+                            values[key] = float(raw)
+                        except ValueError:
+                            pass
+                    if values:
+                        neuro_profiles.append(values)
             except UciTimeout:
                 result = "0-1" if side == chess.WHITE else "1-0"
                 termination = "time forfeit"
@@ -283,6 +300,7 @@ def _play_game(config: MatchConfig, game_index: int, opening: Opening) -> GameRe
         opening=opening.name,
         moves=moves_uci,
         move_times_ms=move_times_ms,
+        neuro_profiles=neuro_profiles,
         pgn=pgn,
         engine_a_score=score_a,
     )
@@ -304,6 +322,18 @@ def run_match(config: MatchConfig) -> MatchSummary:
                 f"[{result.game_index + 1:>4}/{config.games}] {result.white} - {result.black} "
                 f"{result.result} ({result.termination})"
             )
+            if result.neuro_profiles:
+                profiles = result.neuro_profiles
+                def avg(key: str) -> float:
+                    vals = [p[key] for p in profiles if key in p]
+                    return sum(vals) / len(vals) if vals else 0.0
+                print(
+                    "       nc_profile avg: "
+                    f"moves={len(profiles)} depth={avg('depth'):.2f} seldepth={avg('seldepth'):.2f} "
+                    f"nodes={avg('nodes'):.0f} nps={avg('nps'):.0f} "
+                    f"neural_calls={avg('neural_calls'):.1f} neural_ms={avg('neural_ms'):.1f} "
+                    f"neural_share={avg('neural_share_pct'):.1f}% avg_call_us={avg('avg_neural_us'):.0f}"
+                )
 
     with ThreadPoolExecutor(max_workers=config.concurrency) as pool:
         futures = {
