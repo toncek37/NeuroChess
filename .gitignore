@@ -1,0 +1,35 @@
+# C/C++ build output
+/build/
+/out/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+CTestTestfile.cmake
+Makefile
+*.obj
+*.o
+*.exe
+*.pdb
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Models / datasets
+models/*.pt
+models/*.pth
+models/*.onnx
+models/*.engine
+*.pgn
+*.bin
+*.sqlite
+*.db
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
