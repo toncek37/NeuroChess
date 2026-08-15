@@ -11,7 +11,7 @@ from .match import MatchConfig, MatchSummary, Opening, TimeControl, run_match
 from .uci_engine import EngineSpec, UciEngine, UciError
 
 
-DEFAULT_STOCKFISH_LEVELS = (1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3190)
+DEFAULT_STOCKFISH_LEVELS = (1320, 1400, 1600, 1800, 2000, 2200, 2400, 2600, 2800, 3000, 3190)
 
 
 @dataclass
@@ -31,6 +31,7 @@ class LadderConfig:
     score_band: float = 0.08
     confidence: float = 0.95
     validate_stockfish: bool = True
+    start_elo: int = 1800
 
     def validate(self) -> None:
         if len(self.levels) < 2:
@@ -85,13 +86,15 @@ class EloEstimate:
 
 @dataclass
 class LadderResult:
-    estimated_elo: float
-    confidence_lower: float
-    confidence_upper: float
+    estimated_elo: float | None
+    confidence_lower: float | None
+    confidence_upper: float | None
     confidence: float
     total_games: int
     points: list[LadderPoint]
     report_json: str
+    range_status: str = "in_range"
+    range_bound: int | None = None
 
 
 def _normal_quantile(confidence: float) -> float:
@@ -215,16 +218,15 @@ def run_elo_ladder(
         )
         return point
 
-    # A binary search is a poor fit for tiny match samples: a noisy 5/8 at
-    # one level can otherwise jump several hundred Elo in one step. Start near
-    # the middle of the ladder and walk only one level (normally 200 Elo) at a
-    # time. Scores close enough to 50% are confirmed with extra games before
-    # deciding which direction to move.
-    idx = len(config.levels) // 2
+    # Start near a caller-selected anchor (1800 by default), then walk one
+    # calibrated level at a time. This avoids wasting games at 2400+ when we
+    # already expect the tested engine to be around club-player strength.
+    idx = min(range(len(config.levels)), key=lambda i: abs(config.levels[i] - config.start_elo))
     target_idx: int | None = None
     previous_direction = 0
     visited_indices: set[int] = set()
     confirmation_games = max(config.probe_games * 2, min(config.refine_games, 16))
+    range_status = "in_range"
 
     while 0 <= idx < len(config.levels):
         level = config.levels[idx]
@@ -262,7 +264,15 @@ def run_elo_ladder(
             break
 
         visited_indices.add(idx)
-        if next_idx < 0 or next_idx >= len(config.levels) or next_idx in visited_indices:
+        if next_idx < 0:
+            target_idx = idx
+            range_status = "below_range"
+            break
+        if next_idx >= len(config.levels):
+            target_idx = idx
+            range_status = "above_range"
+            break
+        if next_idx in visited_indices:
             target_idx = idx
             break
 
@@ -276,17 +286,23 @@ def run_elo_ladder(
     if target_idx is None:
         target_idx = min(max(idx, 0), len(config.levels) - 1)
 
-    refine_indices = sorted({i for i in (target_idx - 1, target_idx, target_idx + 1)
-                             if 0 <= i < len(config.levels)})
-    emit("Refining around the estimated strength region...")
-    for idx in refine_indices:
-        level = config.levels[idx]
-        already = points[level].games
-        if already < config.refine_games:
-            sample(level, config.refine_games - already)
+    if range_status == "in_range":
+        refine_indices = sorted({i for i in (target_idx - 1, target_idx, target_idx + 1)
+                                 if 0 <= i < len(config.levels)})
+        emit("Refining around the estimated strength region...")
+        for refine_idx in refine_indices:
+            level = config.levels[refine_idx]
+            already = points[level].games
+            if already < config.refine_games:
+                sample(level, config.refine_games - already)
+    else:
+        bound = config.levels[0] if range_status == "below_range" else config.levels[-1]
+        relation = "below" if range_status == "below_range" else "above"
+        emit(f"Strength is clearly {relation} the calibrated Stockfish range; stopping without refinement.")
+        emit(f"Result will be reported as {'<' if range_status == 'below_range' else '>'}{bound} Elo.")
 
     used_points = [points[level] for level in config.levels if points[level].games]
-    estimate = estimate_elo(used_points, config.confidence)
+    estimate = estimate_elo(used_points, config.confidence) if range_status == "in_range" else None
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     report_path = root / f"elo-ladder-{stamp}-{config.seed}.json"
     payload = {
@@ -299,21 +315,32 @@ def run_elo_ladder(
         "refine_games": config.refine_games,
         "time_control": asdict(config.time_control),
         "confidence": config.confidence,
-        "estimate": asdict(estimate),
+        "start_elo": config.start_elo,
+        "range_status": range_status,
+        "range_bound": (config.levels[0] if range_status == "below_range" else config.levels[-1] if range_status == "above_range" else None),
+        "estimate": asdict(estimate) if estimate is not None else None,
         "points": [asdict(point) for point in used_points],
     }
     report_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    emit(
-        f"Estimated Elo {estimate.elo:.0f}; {config.confidence*100:.0f}% CI "
-        f"{estimate.lower:.0f}..{estimate.upper:.0f}; {estimate.games} games."
-    )
+    total_games = sum(point.games for point in used_points)
+    if estimate is not None:
+        emit(
+            f"Estimated Elo {estimate.elo:.0f}; {config.confidence*100:.0f}% CI "
+            f"{estimate.lower:.0f}..{estimate.upper:.0f}; {estimate.games} games."
+        )
+    else:
+        bound = config.levels[0] if range_status == "below_range" else config.levels[-1]
+        relation = "<" if range_status == "below_range" else ">"
+        emit(f"Estimated Elo: {relation}{bound} (outside calibrated Stockfish range); {total_games} games.")
 
     return LadderResult(
-        estimated_elo=estimate.elo,
-        confidence_lower=estimate.lower,
-        confidence_upper=estimate.upper,
+        estimated_elo=estimate.elo if estimate is not None else None,
+        confidence_lower=estimate.lower if estimate is not None else None,
+        confidence_upper=estimate.upper if estimate is not None else None,
         confidence=config.confidence,
-        total_games=estimate.games,
+        total_games=total_games,
         points=used_points,
         report_json=str(report_path),
+        range_status=range_status,
+        range_bound=(config.levels[0] if range_status == "below_range" else config.levels[-1] if range_status == "above_range" else None),
     )

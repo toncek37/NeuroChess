@@ -66,6 +66,7 @@ class BenchmarkApp(tk.Tk):
         self.neural_mode_var = tk.StringVar(value="Classical")
         self.neural_blend_var = tk.IntVar(value=50)
         self.movetime_var = tk.IntVar(value=100)
+        self.start_elo_var = tk.IntVar(value=int(saved.get("start_elo", 1800)))
         self.probe_var = tk.IntVar(value=8)
         self.refine_var = tk.IntVar(value=24)
         self.concurrency_var = tk.IntVar(value=max(1, min(4, os.cpu_count() or 1)))
@@ -111,14 +112,15 @@ class BenchmarkApp(tk.Tk):
 
         settings = ttk.LabelFrame(root, text="Test settings", padding=10)
         settings.grid(row=3, column=0, columnspan=3, sticky="ew", pady=(6, 6))
-        for i in range(5):
+        for i in range(6):
             settings.columnconfigure(i, weight=1)
 
-        self._spin(settings, "Move time [ms]", self.movetime_var, 10, 5000, 0)
-        self._spin(settings, "Probe games", self.probe_var, 2, 200, 1, increment=2)
-        self._spin(settings, "Refine games", self.refine_var, 2, 1000, 2, increment=2)
-        self._spin(settings, "Parallel games", self.concurrency_var, 1, 32, 3)
-        self._spin(settings, "Seed", self.seed_var, 0, 1_000_000, 4)
+        self._spin(settings, "Start Elo", self.start_elo_var, 1320, 3190, 0, increment=20)
+        self._spin(settings, "Move time [ms]", self.movetime_var, 10, 5000, 1)
+        self._spin(settings, "Probe games", self.probe_var, 2, 200, 2, increment=2)
+        self._spin(settings, "Refine games", self.refine_var, 2, 1000, 3, increment=2)
+        self._spin(settings, "Parallel games", self.concurrency_var, 1, 32, 4)
+        self._spin(settings, "Seed", self.seed_var, 0, 1_000_000, 5)
 
         output = ttk.Frame(root)
         output.grid(row=4, column=0, columnspan=3, sticky="ew", pady=4)
@@ -192,6 +194,7 @@ class BenchmarkApp(tk.Tk):
             "stockfish": self.stockfish_var.get().strip(),
             "neural_model": self.neural_model_var.get().strip(),
             "output": self.output_var.get().strip(),
+            "start_elo": str(self.start_elo_var.get()),
         })
 
     def _append(self, text: str) -> None:
@@ -244,6 +247,7 @@ class BenchmarkApp(tk.Tk):
         if mode != "Classical" and model is not None:
             self._append(f"  ONNX model: {model}")
             self._append(f"  Value blend: {self.neural_blend_var.get()}%")
+        self._append(f"  Start Elo:  {self.start_elo_var.get()}")
         self._append(f"  Move time: {self.movetime_var.get()} ms/move")
         self._append(f"  Probe games: {self.probe_var.get()}")
         self._append(f"  Refine games: {self.refine_var.get()}")
@@ -256,6 +260,7 @@ class BenchmarkApp(tk.Tk):
             sys.executable, "-u", "-m", "match_runner.ladder_cli",
             "--engine", str(engine),
             "--stockfish", str(stockfish),
+            "--start-elo", str(self.start_elo_var.get()),
             "--probe-games", str(self.probe_var.get()),
             "--refine-games", str(self.refine_var.get()),
             "--movetime-ms", str(self.movetime_var.get()),
