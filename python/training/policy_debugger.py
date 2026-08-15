@@ -125,8 +125,13 @@ def run_policy_debug(
     session = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
     output_names = [o.name for o in session.get_outputs()]
-    if "policy_logits" not in output_names:
-        raise RuntimeError(f"ONNX model has no policy_logits output: {output_names}")
+    if "policy_logits" in output_names:
+        policy_output_name = "policy_logits"
+    elif "policy" in output_names:
+        policy_output_name = "policy"
+    else:
+        raise RuntimeError(f"ONNX model has no policy/policy_logits output: {output_names}")
+    emit(f"Using ONNX policy output: {policy_output_name}")
 
     neural_ranks: list[int] = []
     classical_ranks: list[int] = []
@@ -171,7 +176,7 @@ def run_policy_debug(
             teacher_move = max(teacher_probs.items(), key=lambda item: item[1])[0]
 
             tensor = encode_board(board).numpy().astype(np.float32, copy=False)[None, ...]
-            logits = np.asarray(session.run(["policy_logits"], {input_name: tensor})[0][0], dtype=np.float64)
+            logits = np.asarray(session.run([policy_output_name], {input_name: tensor})[0][0], dtype=np.float64)
             neural_order = sorted(legal, key=lambda move: float(logits[move_to_index(move)]), reverse=True)
 
             # Cold-root static C++ ordering baseline. TT/killer/history need live search
