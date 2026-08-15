@@ -42,6 +42,7 @@ venv/
 # Local GUI preferences
 .neurochess_benchmark_gui.json
 .neurochess_value_debugger.json
+.neurochess_dataset_gui.json
 
 # IDE / OS
 .vscode/
