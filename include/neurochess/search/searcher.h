@@ -41,6 +41,7 @@ struct SearchConfig {
     int futility_margin_cp = 120;
     int razor_margin_cp = 250;
     int neural_policy_scale = 200;
+    int neural_policy_max_ply = 2;
     int neural_value_blend_percent = 50;
 };
 
