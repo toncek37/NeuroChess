@@ -57,3 +57,5 @@ replace("CMakeLists.txt",
 
 # Bump engine version for branch testing.
 replace("CMakeLists.txt", "project(NeuroChess VERSION 0.12.6 LANGUAGES CXX)", "project(NeuroChess VERSION 0.15.0 LANGUAGES CXX)")
+
+# trigger retry
