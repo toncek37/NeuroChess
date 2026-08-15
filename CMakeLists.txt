@@ -76,6 +76,10 @@ if(NEUROCHESS_BUILD_TESTS)
     target_link_libraries(neurochess_evaluator_tests PRIVATE neurochess_engine)
     add_test(NAME neurochess_evaluator COMMAND neurochess_evaluator_tests)
 
+    add_executable(neurochess_neural_evaluator_tests tests/neural_evaluator_tests.cpp)
+    target_link_libraries(neurochess_neural_evaluator_tests PRIVATE neurochess_engine)
+    add_test(NAME neurochess_neural_evaluator COMMAND neurochess_neural_evaluator_tests)
+
     add_executable(neurochess_search_tests tests/search_tests.cpp)
     target_link_libraries(neurochess_search_tests PRIVATE neurochess_engine)
     add_test(NAME neurochess_search COMMAND neurochess_search_tests)
