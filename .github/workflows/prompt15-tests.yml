@@ -1,0 +1,43 @@
+name: Prompt 15 ONNX inference tests
+
+on:
+  push:
+    branches:
+      - prompt-15-onnx-inference
+  pull_request:
+    branches:
+      - prompt-14-pytorch-policy-wdl
+
+jobs:
+  classical-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure classical build
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DNEUROCHESS_BUILD_BENCHMARKS=OFF
+      - name: Build
+        run: cmake --build build -j2
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+      - name: Python syntax
+        run: python -m py_compile python/training/export_onnx.py python/gui/neural_setup_app.py
+
+  onnx-build:
+    runs-on: ubuntu-latest
+    env:
+      ORT_VERSION: 1.29.0
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download official ONNX Runtime CPU package
+        run: |
+          curl -L --fail -o ort.tgz "https://github.com/microsoft/onnxruntime/releases/download/v${ORT_VERSION}/onnxruntime-linux-x64-${ORT_VERSION}.tgz"
+          tar -xzf ort.tgz
+          echo "ORT_ROOT=$PWD/onnxruntime-linux-x64-${ORT_VERSION}" >> "$GITHUB_ENV"
+      - name: Configure ONNX build
+        run: cmake -S . -B build-onnx -DCMAKE_BUILD_TYPE=Release -DNEUROCHESS_BUILD_BENCHMARKS=OFF -DNEUROCHESS_ENABLE_ONNX=ON -DONNXRUNTIME_ROOT="$ORT_ROOT"
+      - name: Build ONNX engine
+        run: cmake --build build-onnx -j2
+      - name: Test ONNX build
+        env:
+          LD_LIBRARY_PATH: ${{ env.ORT_ROOT }}/lib
+        run: ctest --test-dir build-onnx --output-on-failure
