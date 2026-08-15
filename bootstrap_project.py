@@ -18,7 +18,8 @@ ordered = [
     b / "tail_b0a.txt",
     b / "tail_b0b.txt",
     b / "tail_b0c.txt",
-    b / "tail_b0d.txt",
+    b / "tail_b0d0.txt",
+    b / "tail_b0d1.txt",
     b / "tail_b1.txt",
     b / "tail_b2.txt",
 ]
