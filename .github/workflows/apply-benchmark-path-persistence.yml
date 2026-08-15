@@ -1,0 +1,33 @@
+name: Apply benchmark path persistence
+
+on:
+  push:
+    branches:
+      - prompt-15-onnx-inference
+    paths:
+      - '.github/workflows/apply-benchmark-path-persistence.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+      - name: Apply patch
+        run: python .github/scripts/persist_benchmark_paths.py
+      - name: Remove one-shot helpers
+        run: |
+          rm .github/scripts/persist_benchmark_paths.py
+          rm .github/workflows/apply-benchmark-path-persistence.yml
+      - name: Commit changes
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add python/gui/benchmark_app.py .github/scripts/persist_benchmark_paths.py .github/workflows/apply-benchmark-path-persistence.yml
+          git commit -m "Remember benchmark GUI file paths"
+          git push
