@@ -1,0 +1,50 @@
+name: Apply neural correctness fixes
+on:
+  push:
+    paths: ['.github/workflows/apply-neural-correctness-fixes.yml']
+permissions:
+  contents: write
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: {ref: prompt-15-onnx-inference}
+      - uses: actions/setup-python@v5
+        with: {python-version: '3.11'}
+      - name: Apply fixes and tests
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          # Never return the default 0000 move when legal moves exist but the
+          # first iterative-deepening pass times out (especially with NN eval).
+          p = Path('src/search/searcher.cpp')
+          s = p.read_text()
+          old = '''    SearchResult best{};\n    const auto initial_legal_moves = core::MoveGenerator::legal(board);\n    if (initial_legal_moves.empty()) {\n'''
+          new = '''    SearchResult best{};\n    const auto initial_legal_moves = core::MoveGenerator::legal(board);\n    // Keep a legal fallback from the moment search starts. Neural inference can\n    // consume the entire small time budget before depth 1 completes; returning\n    // a default Move{} in that case is an illegal UCI 0000 move.\n    if (!initial_legal_moves.empty()) {\n        best.best_move = initial_legal_moves.front();\n    }\n    if (initial_legal_moves.empty()) {\n'''
+          if old not in s:
+              raise SystemExit('search fallback target not found')
+          p.write_text(s.replace(old, new, 1))
+
+          # Strengthen C++ policy/special move contract tests.
+          p = Path('tests/neural_evaluator_tests.cpp')
+          s = p.read_text()
+          marker = '''    const core::Move promo{48, 56, core::MoveFlag::Promotion, core::PieceType::Queen};\n    assert(nn::move_to_policy_index(promo) == 4096 + 48 * 64 + 56);\n'''
+          addition = marker + '''\n    // Promotion buckets must exactly match Python: None,Q,R,B,N = 0..4.\n    const core::Move promo_r{48, 56, core::MoveFlag::Promotion, core::PieceType::Rook};\n    const core::Move promo_b{48, 56, core::MoveFlag::Promotion, core::PieceType::Bishop};\n    const core::Move promo_n{48, 56, core::MoveFlag::Promotion, core::PieceType::Knight};\n    assert(nn::move_to_policy_index(promo_r) == 2 * 4096 + 48 * 64 + 56);\n    assert(nn::move_to_policy_index(promo_b) == 3 * 4096 + 48 * 64 + 56);\n    assert(nn::move_to_policy_index(promo_n) == 4 * 4096 + 48 * 64 + 56);\n\n    // Castling and en-passant use the ordinary non-promotion bucket; flags must\n    // not alter the neural policy index.\n    const core::Move castle{4, 6, core::MoveFlag::KingCastle};\n    const core::Move ep{36, 43, core::MoveFlag::EnPassant};\n    assert(nn::move_to_policy_index(castle) == 4 * 64 + 6);\n    assert(nn::move_to_policy_index(ep) == 36 * 64 + 43);\n'''
+          if marker not in s:
+              raise SystemExit('neural test target not found')
+          p.write_text(s.replace(marker, addition, 1))
+
+          # Python exhaustive round-trip over the complete 20,480 policy space.
+          Path('python/tests/test_policy_encoding_exhaustive.py').write_text('''import unittest\n\nimport chess\n\nfrom training.encoding import POLICY_SIZE, index_to_move, move_to_index\n\n\nclass PolicyEncodingExhaustiveTests(unittest.TestCase):\n    def test_all_policy_indices_round_trip(self):\n        for index in range(POLICY_SIZE):\n            self.assertEqual(move_to_index(index_to_move(index)), index)\n\n    def test_special_moves_use_expected_indices(self):\n        for uci in ("e1g1", "e1c1", "e5d6"):\n            move = chess.Move.from_uci(uci)\n            self.assertEqual(move_to_index(move), move.from_square * 64 + move.to_square)\n        buckets = {chess.QUEEN: 1, chess.ROOK: 2, chess.BISHOP: 3, chess.KNIGHT: 4}\n        for piece, bucket in buckets.items():\n            move = chess.Move(chess.A7, chess.A8, promotion=piece)\n            self.assertEqual(move_to_index(move), bucket * 4096 + chess.A7 * 64 + chess.A8)\n\n\nif __name__ == "__main__":\n    unittest.main()\n''')
+          PY
+      - name: Remove one-shot workflow
+        run: rm .github/workflows/apply-neural-correctness-fixes.yml
+      - name: Commit
+        run: |
+          git config user.name github-actions
+          git config user.email github-actions@github.com
+          git add -A
+          git commit -m "Prevent timeout 0000 moves and harden neural policy tests"
+          git push
