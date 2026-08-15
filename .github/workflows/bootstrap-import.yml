@@ -18,28 +18,33 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Verify chunks and import source tree
+      - name: Verify parts and import source tree
         shell: bash
         run: |
-          sha256sum .bootstrap/chunk_*
-          wc -c .bootstrap/chunk_*
-          echo "ad3505f33412901fdb2c2a9bb7f74a4e32964adfbd235b9b2b50281b477dc204  .bootstrap/chunk_00" | sha256sum -c -
-          echo "25246ab790d59eee786cb8e2299157f68a77bee5da7711cf78f4c115e79ae6ad  .bootstrap/chunk_01" | sha256sum -c -
-          echo "2d7f6761dab7e5c594c6a50a85d64ab4546aeef23f6158f5f7b0bf8e5f6ca751  .bootstrap/chunk_02" | sha256sum -c -
-          echo "aef4682e981df4b383c5843eb9ab3d0c500def03f877c2e66cd6a95da5e9ec6c  .bootstrap/chunk_03" | sha256sum -c -
-          echo "cfd17ecf6bfa13869e4f513f23697ee95bef1f42d56e7cad60b6f5fa0bfa331c  .bootstrap/chunk_04" | sha256sum -c -
-          echo "649eec268d2c7a85ea64d10492c1263dcaa75ae12886573efdfda83910c561d6  .bootstrap/chunk_05" | sha256sum -c -
-          cat .bootstrap/chunk_* > /tmp/neurochess.b64
+          set -euo pipefail
+          echo "07ffbd96999b017c825306e2e06b877f986a705042caed020ef515f0f2718bf5  .bootstrap/part_00" | sha256sum -c -
+          echo "9ead1aa9c60ea8e87f5e52eac50e08433f930e2c32dbd04ff18cadb35742e228  .bootstrap/part_01" | sha256sum -c -
+          echo "22abfcd9cc06cff06ca2519698c42277f121c6939fd03e72cfa6bad2736741a4  .bootstrap/part_02" | sha256sum -c -
+          echo "1b7625da33fe03e8fd6f1b97ca6566386a1d745f5bd5d67c4d95bf784e8caf22  .bootstrap/part_03" | sha256sum -c -
+          echo "47affca2879271b3be83d1982793b291adb7d0bc6806b443c731c96d9051618d  .bootstrap/part_04" | sha256sum -c -
+          echo "5387dd9aaf274b90b219c2fdaec0338152912f8faa83d7036cf64e8d193c5101  .bootstrap/part_05" | sha256sum -c -
+          echo "82169660e81da3b4ac3515625e9187042f998a2617ec8b2a8b31e1d043934d79  .bootstrap/part_06" | sha256sum -c -
+          echo "c70c8139147144186185fa159f6ab1b1084fb0140e9df0b7a1d910ddd21d12c5  .bootstrap/part_07" | sha256sum -c -
+          echo "032a23eac6ac7d7ae98706645379f39bf1e56217562804432e3f4f6e14f2f1a1  .bootstrap/part_08" | sha256sum -c -
+          echo "a7c2f9ff15f86e69ef0a079d16e59a05e0d74cedb1978277dd57c54a66bf1c33  .bootstrap/part_09" | sha256sum -c -
+          echo "649eec268d2c7a85ea64d10492c1263dcaa75ae12886573efdfda83910c561d6  .bootstrap/part_10" | sha256sum -c -
+          cat .bootstrap/part_00 .bootstrap/part_01 .bootstrap/part_02 .bootstrap/part_03 .bootstrap/part_04 .bootstrap/part_05 .bootstrap/part_06 .bootstrap/part_07 .bootstrap/part_08 .bootstrap/part_09 .bootstrap/part_10 > /tmp/neurochess.b64
           echo "68ccc3ba4bf252796a0e9f10804e8c5f771dd7d6ca1c2d4976dc0cdcecfe39bc  /tmp/neurochess.b64" | sha256sum -c -
           base64 -d /tmp/neurochess.b64 > /tmp/neurochess.tar.gz
           echo "1c099a33ff74e6eda0c28ffa4d680858eb268f11cb0e36ce31cb78f8a3f9059f  /tmp/neurochess.tar.gz" | sha256sum -c -
           tar -xzf /tmp/neurochess.tar.gz -C .
           rm -rf .bootstrap
-          rm -f .github/workflows/bootstrap-import.yml
+          rm -f .github/workflows/bootstrap.yml .github/workflows/bootstrap-import.yml
 
       - name: Commit imported project
         shell: bash
         run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add -A
