@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import queue
 import re
@@ -13,6 +14,22 @@ from tkinter import filedialog, messagebox, ttk
 
 RESULT_RE = re.compile(r"Estimated Stockfish-equivalent Elo: ([\d.-]+) \((\d+)% CI ([\d.-]+)\.\.([\d.-]+)\)")
 NEURAL_MODES = ("Classical", "Policy", "Value", "Policy + Value")
+SETTINGS_PATH = Path(".neurochess_benchmark_gui.json")
+
+
+def _load_settings() -> dict[str, str]:
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def _save_settings(data: dict[str, str]) -> None:
+    try:
+        SETTINGS_PATH.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _default_engine() -> str:
@@ -42,9 +59,10 @@ class BenchmarkApp(tk.Tk):
         self.proc: subprocess.Popen[str] | None = None
         self.events: queue.Queue[tuple[str, str | int | None]] = queue.Queue()
 
-        self.engine_var = tk.StringVar(value=_default_engine())
-        self.stockfish_var = tk.StringVar()
-        self.neural_model_var = tk.StringVar(value=_default_model())
+        saved = _load_settings()
+        self.engine_var = tk.StringVar(value=saved.get("engine", _default_engine()))
+        self.stockfish_var = tk.StringVar(value=saved.get("stockfish", ""))
+        self.neural_model_var = tk.StringVar(value=saved.get("neural_model", _default_model()))
         self.neural_mode_var = tk.StringVar(value="Classical")
         self.neural_blend_var = tk.IntVar(value=50)
         self.movetime_var = tk.IntVar(value=100)
@@ -52,7 +70,7 @@ class BenchmarkApp(tk.Tk):
         self.refine_var = tk.IntVar(value=24)
         self.concurrency_var = tk.IntVar(value=max(1, min(4, os.cpu_count() or 1)))
         self.seed_var = tk.IntVar(value=1)
-        self.output_var = tk.StringVar(value=str(Path("elo-ladder-results").resolve()))
+        self.output_var = tk.StringVar(value=saved.get("output", str(Path("elo-ladder-results").resolve())))
         self.status_var = tk.StringVar(value="Ready")
         self.elo_var = tk.StringVar(value="—")
         self.ci_var = tk.StringVar(value="—")
@@ -154,16 +172,27 @@ class BenchmarkApp(tk.Tk):
         path = filedialog.askopenfilename(title="Select engine executable", filetypes=[("Executable", "*.exe"), ("All files", "*.*")])
         if path:
             variable.set(path)
+            self._save_preferences()
 
     def _browse_model(self) -> None:
         path = filedialog.askopenfilename(title="Select NeuroChess ONNX model", filetypes=[("ONNX model", "*.onnx"), ("All files", "*.*")])
         if path:
             self.neural_model_var.set(path)
+            self._save_preferences()
 
     def _browse_output(self) -> None:
         path = filedialog.askdirectory(title="Select results folder")
         if path:
             self.output_var.set(path)
+            self._save_preferences()
+
+    def _save_preferences(self) -> None:
+        _save_settings({
+            "engine": self.engine_var.get().strip(),
+            "stockfish": self.stockfish_var.get().strip(),
+            "neural_model": self.neural_model_var.get().strip(),
+            "output": self.output_var.get().strip(),
+        })
 
     def _append(self, text: str) -> None:
         self.log.configure(state="normal")
@@ -199,6 +228,7 @@ class BenchmarkApp(tk.Tk):
         engine, stockfish, model = validated
         output = Path(self.output_var.get().strip())
         output.mkdir(parents=True, exist_ok=True)
+        self._save_preferences()
         self.elo_var.set("—")
         self.ci_var.set("—")
         self.games_var.set("—")
@@ -288,6 +318,7 @@ class BenchmarkApp(tk.Tk):
             if not messagebox.askyesno("NeuroChess Elo Benchmark", "A benchmark is running. Stop it and close?"):
                 return
             self.proc.terminate()
+        self._save_preferences()
         self.destroy()
 
 
