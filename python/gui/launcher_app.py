@@ -30,6 +30,11 @@ MODULES = (
         "Measure NeuroChess strength against Stockfish and compare Classical / Policy / Value modes.",
     ),
     Module(
+        "Value Debugger",
+        "run_value_debugger_gui.bat",
+        "Validate ONNX WDL/value against teacher-labelled positions and diagnose orientation/calibration problems.",
+    ),
+    Module(
         "Dataset Generator",
         "run_dataset_gui.bat",
         "Generate legal chess positions and label them with Stockfish for neural training.",
@@ -51,8 +56,8 @@ class LauncherApp(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title("NeuroChess Launcher")
-        self.geometry("720x470")
-        self.minsize(640, 420)
+        self.geometry("760x540")
+        self.minsize(660, 470)
         self._status = tk.StringVar(value="Ready")
         self._build_ui()
 
@@ -86,7 +91,7 @@ class LauncherApp(tk.Tk):
             description = module.description
             if not path.is_file():
                 description += f"  [Missing: {module.launcher}]"
-            ttk.Label(modules, text=description, wraplength=430).grid(
+            ttk.Label(modules, text=description, wraplength=460).grid(
                 row=row, column=1, sticky="w", pady=7
             )
 
