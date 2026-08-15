@@ -34,6 +34,7 @@ def main() -> int:
         output_names=["policy", "wdl_logits"],
         opset_version=args.opset,
         do_constant_folding=True,
+        dynamo=False,
     )
     print(f"Exported ONNX model to {args.output}")
     return 0
