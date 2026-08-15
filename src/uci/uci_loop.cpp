@@ -395,7 +395,10 @@ private:
                     << " neural_calls=" << result.stats.neural_evaluations
                     << " neural_us=" << result.stats.neural_inference_us
                     << " neural_ms=" << neural_ms
-                    << " neural_share_pct=" << neural_share;
+                    << " neural_share_pct=" << neural_share
+                    << " root_classical_rank=" << result.stats.root_classical_best_rank
+                    << " root_policy_rank=" << result.stats.root_policy_best_rank
+                    << " root_rank_gain=" << result.stats.root_policy_rank_gain;
             if (result.stats.neural_evaluations > 0) {
                 profile << " avg_neural_us="
                         << (result.stats.neural_inference_us / result.stats.neural_evaluations);

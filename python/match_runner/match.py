@@ -334,6 +334,19 @@ def run_match(config: MatchConfig) -> MatchSummary:
                     f"neural_calls={avg('neural_calls'):.1f} neural_ms={avg('neural_ms'):.1f} "
                     f"neural_share={avg('neural_share_pct'):.1f}% avg_call_us={avg('avg_neural_us'):.0f}"
                 )
+                ranked = [p for p in profiles if p.get('root_classical_rank', 0) > 0 and p.get('root_policy_rank', 0) > 0]
+                if ranked:
+                    improved = sum(p['root_rank_gain'] > 0 for p in ranked)
+                    same = sum(p['root_rank_gain'] == 0 for p in ranked)
+                    worsened = sum(p['root_rank_gain'] < 0 for p in ranked)
+                    print(
+                        "       root_policy: "
+                        f"classical_rank={sum(p['root_classical_rank'] for p in ranked)/len(ranked):.2f} "
+                        f"policy_rank={sum(p['root_policy_rank'] for p in ranked)/len(ranked):.2f} "
+                        f"gain={sum(p['root_rank_gain'] for p in ranked)/len(ranked):+.2f} "
+                        f"improved={100.0*improved/len(ranked):.1f}% "
+                        f"same={100.0*same/len(ranked):.1f}% worsened={100.0*worsened/len(ranked):.1f}%"
+                    )
 
     with ThreadPoolExecutor(max_workers=config.concurrency) as pool:
         futures = {
