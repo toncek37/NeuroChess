@@ -31,8 +31,9 @@ venv/
 *.sqlite
 *.db
 
-# Generated benchmark output
+# Generated benchmark / diagnostic output
 /elo-ladder-results/
+/value-debug-results/
 
 # Downloaded/local runtimes and caches
 /third_party/
@@ -40,6 +41,7 @@ venv/
 
 # Local GUI preferences
 .neurochess_benchmark_gui.json
+.neurochess_value_debugger.json
 
 # IDE / OS
 .vscode/
